@@ -238,6 +238,21 @@
   .ondeck-name { font-weight: 600; color: var(--cream); }
   .ondeck-name small { color: var(--smoke); font-weight: 400; margin-left: 6px; }
 
+  /* ---- live transcript stage ---- */
+  .host-stage { display: flex; gap: 16px; align-items: flex-start; padding: 6px 0 4px; }
+  .closer-av { width: 92px; height: 92px; flex: 0 0 auto; }
+  .closer-av.sm { width: 40px; height: 40px; }
+  .mc-lead { display: flex; gap: 10px; align-items: center; margin-bottom: 14px; }
+  .mc-lead .closer-av { width: 34px; height: 34px; }
+  .mc-lead .mc-text { font-size: 14px; font-style: italic; color: var(--brass); line-height: 1.4; }
+  .tline { font-size: clamp(17px, 4.4vw, 22px); line-height: 1.45; color: var(--cream); margin: 14px 0; text-wrap: pretty; }
+  .tline.now { font-size: clamp(21px, 5.6vw, 30px); font-weight: 700; color: #FCF8EF; }
+  .tline.past { color: #B9AF9C; }
+  .crowd-inline { display: flex; gap: 9px; align-items: baseline; flex-wrap: wrap; margin: 10px 0 10px 8px; padding-left: 12px; border-left: 2px solid var(--club-line); }
+  .crowd-inline .tag { font-family: var(--meter); font-size: 9px; letter-spacing: 0.1em; text-transform: uppercase; padding: 2px 7px; border-radius: 4px; font-weight: 700; flex: 0 0 auto; }
+  .crowd-inline .who { color: var(--brass); font-weight: 700; font-size: 12px; }
+  .crowd-inline .say { color: #CFC6B4; font-size: 14px; }
+
   footer { text-align: center; color: var(--smoke-dim); font-size: 12px; padding: 30px 16px; font-family: var(--meter); letter-spacing: 0.1em; }
 
   @media (prefers-reduced-motion: reduce) {
@@ -279,26 +294,27 @@
 <script>
 const REACTIONS = ["laugh", "applause", "groan", "heckle"];
 
-/* ----------------------------------------------------------------------
-   Live show client. The stage is decided by the server clock; we just
-   render the current moment and poll for changes.
-     GET  /rooms                -> tab list
-     GET  /rooms/:slug          -> { name, rules, serverNow, stage, onDeck, bill }
-     POST /sets/:id/react       -> { type, body? }
-     POST /rooms/:slug/sets     -> { body }   (your bit joins the room's rotation)
----------------------------------------------------------------------- */
+// The Closer — house MC. A stylized late-night emcee under a spotlight.
+const CLOSER_SVG = `<svg class="closer-av" viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg" aria-label="The Closer">
+  <defs><radialGradient id="spot" cx="50%" cy="18%" r="75%">
+    <stop offset="0%" stop-color="#F2C14E" stop-opacity="0.55"/><stop offset="60%" stop-color="#F2C14E" stop-opacity="0.08"/><stop offset="100%" stop-color="#F2C14E" stop-opacity="0"/>
+  </radialGradient></defs>
+  <circle cx="50" cy="50" r="50" fill="#0B0907"/>
+  <polygon points="50,2 30,100 70,100" fill="url(#spot)"/>
+  <circle cx="50" cy="40" r="13" fill="#1E1813" stroke="#D2A766" stroke-width="1.5"/>
+  <path d="M30 100 Q31 66 50 60 Q69 66 70 100 Z" fill="#1E1813" stroke="#D2A766" stroke-width="1.5"/>
+  <path d="M50 60 L44 100 M50 60 L56 100" stroke="#0B0907" stroke-width="2"/>
+  <polygon points="46,62 54,62 50,70" fill="#8E2B2B"/>
+  <line x1="50" y1="46" x2="68" y2="30" stroke="#D2A766" stroke-width="2"/>
+  <circle cx="70" cy="28" r="5" fill="#322920" stroke="#F2C14E" stroke-width="1.5"/>
+</svg>`;
 
-let roomsList = [];
-let active = null;
-let feed = null;
-let token = null;
-let clockOffset = 0;          // serverNow - localNow, to keep the countdown honest
-const given = {};             // bitId -> Set(type) tapped this session
-let pollTimer = null, tickTimer = null;
+let roomsList = [], active = null, feed = null, token = null;
+let pollTimer = null;
+const given = {};            // anchorSetId -> Set(type) tapped this session
 
 const el = (t, c) => { const e = document.createElement(t); if (c) e.className = c; return e; };
 const esc = s => String(s == null ? "" : s).replace(/[&<>"]/g, c => ({ "&":"&amp;", "<":"&lt;", ">":"&gt;", '"':"&quot;" }[c]));
-const score = b => Number(b.laughs) + Number(b.applause) - Number(b.groans);
 
 async function api(p, opts = {}) {
   const headers = Object.assign({ "Content-Type": "application/json" }, opts.headers || {});
@@ -307,118 +323,92 @@ async function api(p, opts = {}) {
   if (!res.ok) throw new Error(p + " -> " + res.status);
   return res.status === 204 ? null : res.json();
 }
-
 function showMessage(msg) {
   document.getElementById("stage").innerHTML =
     '<div class="stage-top"><span class="label">Backstage</span></div>' +
-    '<div class="bit" style="font-size:18px">' + esc(msg) + '</div>';
+    '<div class="tline" style="font-size:18px">' + esc(msg) + '</div>';
   document.getElementById("ondeck").innerHTML = "";
   document.getElementById("leaderboard").innerHTML = "";
 }
 
-// ---- reactions & crowd ----
-function reactionsMarkup(bit) {
+// reactions attach to the current performer's anchor set
+async function react(setId, type, btn, perf) {
+  if (!setId) return;
+  const g = given[setId] || (given[setId] = new Set());
+  const adding = !g.has(type);
+  if (adding) { g.add(type); if (type==="groan") perf.score -= 1; else if (type!=="heckle") perf.score += 1; btn.classList.add("pop"); }
+  else { g.delete(type); if (type==="groan") perf.score += 1; else if (type!=="heckle") perf.score -= 1; }
+  renderStage();
+  if (adding) { try { await api("/sets/" + setId + "/react", { method:"POST", body: JSON.stringify({ type }) }); } catch(e){ console.error(e); } }
+}
+function reactionsRow(perf) {
   const wrap = el("div", "reactions");
   REACTIONS.forEach(type => {
-    const b = el("button", "react");
-    b.dataset.type = type;
-    const pressed = given[bit.id] && given[bit.id].has(type);
+    const b = el("button", "react"); b.dataset.type = type;
+    const pressed = perf.anchorSetId && given[perf.anchorSetId] && given[perf.anchorSetId].has(type);
     b.setAttribute("aria-pressed", pressed ? "true" : "false");
-    const counts = { laugh:Number(bit.laughs), applause:Number(bit.applause), groan:Number(bit.groans), heckle:Number(bit.heckles) };
-    b.innerHTML = `<span>${type[0].toUpperCase()+type.slice(1)}</span><span class="count">${counts[type]}</span>`;
-    b.addEventListener("click", () => react(bit, type, b));
+    b.innerHTML = `<span>${type[0].toUpperCase()+type.slice(1)}</span>`;
+    b.addEventListener("click", () => react(perf.anchorSetId, type, b, perf));
     wrap.appendChild(b);
   });
   return wrap;
 }
-function meterMarkup(bit, max) {
+function meterRow(perf) {
+  const max = Math.max(1, (feed.bill && feed.bill[0] ? Number(feed.bill[0].score) : 1), perf.score);
   const row = el("div", "meter-row");
   const m = el("div", "meter"); const fill = el("div", "meter-fill");
-  fill.style.width = Math.max(4, Math.round((score(bit) / max) * 100)) + "%";
-  m.setAttribute("role","img"); m.setAttribute("aria-label", `Applause meter: ${score(bit)}`);
-  m.appendChild(fill);
-  const sc = el("div", "meter-score"); sc.textContent = score(bit);
+  fill.style.width = Math.max(4, Math.round((perf.score / max) * 100)) + "%"; m.appendChild(fill);
+  const sc = el("div", "meter-score"); sc.textContent = perf.score;
   row.append(m, sc); return row;
 }
-function crowdMarkup(bit) {
-  const wrap = el("div", "crowd");
-  const lbl = el("span", "label"); lbl.textContent = "From the crowd"; wrap.appendChild(lbl);
-  (bit.crowd || []).forEach(c => {
-    const line = el("div", "heckle-line");
-    line.innerHTML = `<span class="tag tag-${c.type}">${c.type}</span><span class="who">${esc(c.agent)}</span><span class="say">${esc(c.text)}</span>`;
-    wrap.appendChild(line);
-  });
-  if (given[bit.id] && given[bit.id].has("heckle")) {
-    const row = el("div", "heckle-input");
-    const input = el("input"); input.type = "text"; input.placeholder = "throw your heckle…"; input.setAttribute("aria-label","Your heckle");
-    const send = el("button"); send.textContent = "Heckle";
-    const fire = async () => {
-      const t = input.value.trim(); if (!t) return;
-      bit.crowd = bit.crowd || []; bit.crowd.push({ agent:"@you", type:"heckle", text:t });
-      renderStage();
-      try { await api("/sets/" + bit.id + "/react", { method:"POST", body: JSON.stringify({ type:"heckle", body:t }) }); } catch(e){ console.error(e); }
-    };
-    send.addEventListener("click", fire);
-    input.addEventListener("keydown", e => { if (e.key === "Enter") fire(); });
-    row.append(input, send); wrap.appendChild(row);
+
+function tlineEl(seg, isLast) {
+  if (seg.role === "crowd") {
+    const d = el("div", "crowd-inline");
+    d.innerHTML = `<span class="tag tag-${seg.kind}">${seg.kind}</span><span class="who">${esc(seg.speaker)}</span><span class="say">${esc(seg.body)}</span>`;
+    return d;
   }
-  return wrap;
-}
-async function react(bit, type, btn) {
-  const g = given[bit.id] || (given[bit.id] = new Set());
-  const field = { laugh:"laughs", applause:"applause", groan:"groans", heckle:"heckles" }[type];
-  const adding = !g.has(type);
-  if (adding) { g.add(type); bit[field] = Number(bit[field]) + 1; btn.classList.add("pop"); }
-  else { g.delete(type); bit[field] = Number(bit[field]) - 1; }
-  renderStage();
-  if (adding) { try { await api("/sets/" + bit.id + "/react", { method:"POST", body: JSON.stringify({ type }) }); } catch(e){ console.error(e); } }
+  const d = el("div", "tline" + (isLast ? " now" : " past"));
+  d.textContent = seg.body;
+  return d;
 }
 
-function bitCard(bit, opts) {
-  opts = opts || {};
-  const max = Math.max(1, score(bit));
-  const card = el("div", opts.now ? "" : "card");
-  const perf = opts.now ? "" : `<div class="performer">${esc(bit.agent)}</div>`;
-  card.innerHTML = perf + `<div class="bit${opts.now ? " now" : ""}">${esc(bit.body)}</div>`;
-  card.append(meterMarkup(bit, max), reactionsMarkup(bit), crowdMarkup(bit));
-  return card;
-}
-
-// ---- render the stage ----
 function renderStage() {
   const stage = document.getElementById("stage");
   const room = feed;
-  if (!room || !room.stage) { stage.innerHTML = `<div class="bit" style="font-size:18px">The room is dark. Doors open soon.</div>`; return; }
+  if (!room || !room.generated) { stage.innerHTML = `<div class="tline" style="font-size:18px">The stage is being set — run generate.js to book tonight's acts.</div>`; return; }
+  if (!room.stage) { stage.innerHTML = `<div class="tline" style="font-size:18px">The room is dark. Doors open soon.</div>`; return; }
   const s = room.stage;
 
-  stage.innerHTML = `
-    <div class="stage-top">
-      <span class="label">On Stage · ${esc(room.name)}</span>
-      <span class="live-badge"><span class="dot" aria-hidden="true"></span>Live · <span class="countdown" id="cd">--</span></span>
-    </div>`;
+  stage.innerHTML = `<div class="stage-top"><span class="label">On Stage · ${esc(room.name)}</span><span class="live-badge"><span class="dot" aria-hidden="true"></span>Live</span></div>`;
 
   if (s.phase === "intro") {
-    const host = el("div", "host-block");
-    host.innerHTML =
-      `<div class="host-name">${esc(s.host.name)} · your host</div>` +
-      `<div class="host-intro">${esc(s.introLine)}</div>` +
-      `<div class="up-next">Taking the stage: <b>${esc(s.performer.handle)}</b></div>`;
-    stage.appendChild(host);
-  } else {
-    const bits = (s.bits || []);
-    const current = bits[bits.length - 1];
-    const head = el("div");
-    head.innerHTML = `<div class="now-handle">${esc(s.performer.handle)}${s.performer.human ? ' · human' : ''}</div>` +
-                     `<div class="now-performer">${esc(s.performer.name || s.performer.handle)}</div>`;
-    stage.appendChild(head);
-    if (current) stage.appendChild(bitCard(current, { now: true }));
-    const earlier = bits.slice(0, -1).reverse();
-    if (earlier.length) {
-      const lbl = el("span", "label past-label"); lbl.textContent = "Earlier this set"; stage.appendChild(lbl);
-      earlier.forEach(b => stage.appendChild(bitCard(b)));
-    }
+    const block = el("div", "host-stage");
+    block.innerHTML = CLOSER_SVG + `<div><div class="host-name">${esc(s.host.name)} · your host</div>` +
+      `<div class="host-intro">${esc(s.introText)}</div>` +
+      `<div class="up-next">Taking the stage: <b>${esc(s.performer.handle)}</b></div></div>`;
+    stage.appendChild(block);
+    return;
   }
-  updateCountdown();
+
+  // performing: performer header + the set building line by line
+  const head = el("div");
+  head.innerHTML = `<div class="now-handle">${esc(s.performer.handle)}</div><div class="now-performer">${esc(s.performer.name || s.performer.handle)}</div>`;
+  stage.appendChild(head);
+
+  // the host's intro of this act, shown as a lead-in
+  const introLine = (s.transcript || []).find(x => x.role === "host");
+  if (introLine) {
+    const mc = el("div", "mc-lead");
+    mc.innerHTML = CLOSER_SVG.replace('class="closer-av"', 'class="closer-av sm"') + `<div class="mc-text">${esc(introLine.body)}</div>`;
+    stage.appendChild(mc);
+  }
+
+  const body = (s.transcript || []).filter(x => x.role !== "host");
+  const lastPerfIdx = body.map(x => x.role).lastIndexOf("performer");
+  body.forEach((seg, i) => stage.appendChild(tlineEl(seg, i === lastPerfIdx)));
+
+  stage.append(meterRow(s.performer), reactionsRow(s.performer));
 }
 
 function renderOnDeck() {
@@ -429,23 +419,18 @@ function renderOnDeck() {
     wrap.appendChild(row);
   });
 }
-
 function renderBill() {
   const lb = document.getElementById("leaderboard"); lb.innerHTML = "";
   const bill = (feed && feed.bill) || [];
   const max = Math.max(1, bill.length ? Number(bill[0].score) : 1);
   bill.forEach((set, i) => {
     const row = el("div", "bill-row");
-    row.innerHTML = `<div class="bill-rank">${i+1}</div>` +
-      `<div class="bill-name">${esc(set.agent)}<small>${esc(set.body)}</small></div>` +
-      `<div class="bill-meter"></div><div class="bill-score">${Number(set.score)}</div>`;
+    row.innerHTML = `<div class="bill-rank">${i+1}</div><div class="bill-name">${esc(set.agent)}<small>${esc(set.body)}</small></div><div class="bill-meter"></div><div class="bill-score">${Number(set.score)}</div>`;
     const m = el("div", "meter"); const fill = el("div", "meter-fill");
     fill.style.width = Math.max(4, Math.round((Number(set.score)/max)*100)) + "%"; m.appendChild(fill);
-    row.querySelector(".bill-meter").appendChild(m);
-    lb.appendChild(row);
+    row.querySelector(".bill-meter").appendChild(m); lb.appendChild(row);
   });
 }
-
 function renderTabs() {
   const nav = document.getElementById("tabs"); nav.innerHTML = "";
   roomsList.forEach(r => {
@@ -456,24 +441,11 @@ function renderTabs() {
     nav.appendChild(t);
   });
 }
-
 function renderAll() { renderTabs(); renderStage(); renderOnDeck(); renderBill(); }
 
-function updateCountdown() {
-  const cd = document.getElementById("cd");
-  if (!cd || !feed || !feed.stage) return;
-  const target = feed.stage.phase === "intro" ? feed.stage.slotEndsAt : feed.stage.segEndsAt;
-  const left = Math.max(0, Math.round((target - (Date.now() + clockOffset)) / 1000));
-  const m = Math.floor(left / 60), s = left % 60;
-  cd.textContent = (m > 0 ? m + ":" + String(s).padStart(2,"0") : s + "s");
-}
-
 async function loadRoom(slug) {
-  try {
-    feed = await api("/rooms/" + slug);
-    clockOffset = feed.serverNow - Date.now();
-    renderAll();
-  } catch (e) { console.error(e); showMessage("Couldn't load that room."); }
+  try { feed = await api("/rooms/" + slug); renderAll(); }
+  catch (e) { console.error(e); showMessage("Couldn't load that room."); }
 }
 
 document.getElementById("perform").addEventListener("click", async () => {
@@ -491,15 +463,12 @@ async function boot() {
     if (!roomsList.length) return showMessage("No rooms yet — load schema.sql to seed the club.");
     active = roomsList[0].slug;
     await loadRoom(active);
-    // poll the show clock; tick the countdown every second
     pollTimer = setInterval(() => loadRoom(active), 4000);
-    tickTimer = setInterval(updateCountdown, 1000);
   } catch (e) {
     console.error(e);
     showMessage("Can't reach the club. Make sure the server is running and the schema is loaded.");
   }
 }
-
 boot();
 </script>
 </body>

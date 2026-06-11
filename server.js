@@ -36,58 +36,53 @@ const INTROS = [
   "Our next performer is contractually obligated to be here. So am I. Let's make the best of it \u2014 {p}!",
 ];
 
-// Build the repeating timeline for one room from performers (fixed order) and each one's bits.
-function buildSchedule(rotation, bitsByPerformer) {
-  const segs = [];
-  rotation.forEach((perf, pi) => {
-    segs.push({ type: "intro", pi, dur: INTRO_SECS });
-    (bitsByPerformer[perf] || []).forEach(b => segs.push({ type: "bit", pi, bitId: b.id, dur: BIT_SECS }));
-  });
-  const total = segs.reduce((a, s) => a + s.dur, 0);
-  return { segs, total };
+// Split a room's transcript rows (ordered) into acts. An act = a host intro
+// segment plus the performer lines + crowd that follow it, until the next intro.
+function buildActs(rows) {
+  // attach cumulative start/end times
+  let t = 0;
+  const segs = rows.map(r => { const s = { ...r, start: t, end: t + r.dur_secs }; t += r.dur_secs; return s; });
+  const total = t;
+  const acts = [];
+  let cur = null;
+  for (const s of segs) {
+    if (s.kind === "intro" || !cur) {
+      cur = { intro: s.kind === "intro" ? s : null, performer: null, segs: [], start: s.start, end: s.end };
+      acts.push(cur);
+    }
+    cur.segs.push(s);
+    cur.end = s.end;
+    if (s.role === "performer" && !cur.performer) cur.performer = s.speaker;
+  }
+  return { segs, acts, total };
 }
 
-// Given the schedule and a unix time (seconds), compute what's on stage now.
-function stageAt(sched, rotation, nowSec) {
-  if (!sched.total) return null;
-  const span = nowSec - EPOCH_SEC;
-  const loop = Math.floor(span / sched.total);
-  const loopStart = EPOCH_SEC + loop * sched.total;
-  const t = ((span % sched.total) + sched.total) % sched.total;
+// Given the acts timeline and a unix time, compute what's on stage now.
+function playAt(tl, nowSec) {
+  if (!tl.total) return null;
+  const loop = Math.floor((nowSec - EPOCH_SEC) / tl.total);
+  const loopStart = EPOCH_SEC + loop * tl.total;
+  const t = (((nowSec - EPOCH_SEC) % tl.total) + tl.total) % tl.total;
 
-  // find active segment + its start offset
-  let acc = 0, active = null, activeIdx = 0;
-  for (let i = 0; i < sched.segs.length; i++) {
-    if (t < acc + sched.segs[i].dur) { active = sched.segs[i]; activeIdx = i; break; }
-    acc += sched.segs[i].dur;
-  }
-  const segEnd = acc + active.dur;
-  const pi = active.pi;
+  let actIdx = 0;
+  for (let i = 0; i < tl.acts.length; i++) { if (t < tl.acts[i].end) { actIdx = i; break; } actIdx = i; }
+  const act = tl.acts[actIdx];
 
-  // bounds of this performer's slot (contiguous segments with same pi)
-  let slotStart = activeIdx, slotEnd = activeIdx;
-  while (slotStart > 0 && sched.segs[slotStart - 1].pi === pi) slotStart--;
-  while (slotEnd < sched.segs.length - 1 && sched.segs[slotEnd + 1].pi === pi) slotEnd++;
-  let slotStartT = 0; for (let i = 0; i < slotStart; i++) slotStartT += sched.segs[i].dur;
-  let slotEndT = slotStartT; for (let i = slotStart; i <= slotEnd; i++) slotEndT += sched.segs[i].dur;
+  // active segment within the act
+  let active = act.segs[0];
+  for (const s of act.segs) { if (t >= s.start && t < s.end) { active = s; break; } }
 
-  // bits whose segment has already begun this slot
-  const revealedBitIds = [];
-  let walk = slotStartT;
-  for (let i = slotStart; i <= slotEnd; i++) {
-    const s = sched.segs[i];
-    if (s.type === "bit" && t >= walk) revealedBitIds.push(s.bitId);
-    walk += s.dur;
-  }
+  const revealed = act.segs.filter(s => s.start <= t)
+    .map(s => ({ speaker: s.speaker, role: s.role, kind: s.kind, body: s.body }));
 
   return {
-    phase: active.type === "intro" ? "intro" : "performing",
-    performerIdx: pi,
-    revealedBitIds,
-    currentBitId: active.type === "bit" ? active.bitId : null,
-    segEndsAtSec: loopStart + segEnd,
-    slotEndsAtSec: loopStart + slotEndT,
-    absSlot: loop * rotation.length + pi,
+    phase: active.role === "host" ? "intro" : "performing",
+    performer: act.performer,
+    introText: act.intro ? act.intro.body : "",
+    revealed,
+    segEndsAtSec: loopStart + active.end,
+    actEndsAtSec: loopStart + act.end,
+    nextPerformers: [1, 2, 3].map(k => tl.acts[(actIdx + k) % tl.acts.length].performer).filter(Boolean),
   };
 }
 
@@ -171,79 +166,59 @@ app.get("/rooms/:slug", h(async (req, res) => {
   const room = (await q("select * from rooms where slug = $1", [req.params.slug])).rows[0];
   if (!room) return res.status(404).json({ error: "no such room" });
 
-  // all live sets in the room with scores + author
+  // performer standings (existing seeded sets power the leaderboard + the live applause meter)
   const sets = (await q(
-    `select ss.set_id as id, a.handle as agent, a.display_name as name, a.kind,
-            ss.body, ss.score, ss.laughs, ss.groans, ss.applause, ss.heckles, ss.created_at
+    `select ss.set_id as id, a.handle as agent, a.display_name as name, a.kind, ss.body, ss.score
      from set_scores ss join agents a on a.id = ss.agent_id
      where ss.room_id = $1
-     order by a.handle, ss.created_at`,
+     order by ss.score desc`,
     [room.id]
   )).rows;
-
-  // crowd thread (reactions carrying text), grouped by set
-  const crowd = (await q(
-    `select r.set_id, a.handle as agent, r.type, r.body as text
-     from reactions r join agents a on a.id = r.agent_id join sets s on s.id = r.set_id
-     where s.room_id = $1 and r.body is not null and s.status = 'live'
-     order by r.created_at`,
-    [room.id]
-  )).rows;
-  const byset = {};
-  for (const c of crowd) (byset[c.set_id] || (byset[c.set_id] = [])).push({ agent: c.agent, type: c.type, text: c.text });
-
-  const setById = {};
+  // anchor set per performer (their top-scoring set) — reactions during the live show attach here
+  const anchor = {}, standing = {};
   for (const s of sets) {
-    s.laughs = num(s.laughs); s.applause = num(s.applause); s.groans = num(s.groans);
-    s.heckles = num(s.heckles); s.score = num(s.score);
-    s.human = s.kind === "human"; s.crowd = byset[s.id] || []; delete s.kind; delete s.created_at;
-    setById[s.id] = s;
+    s.score = num(s.score);
+    if (!anchor[s.agent]) anchor[s.agent] = s.id;
+    standing[s.agent] = (standing[s.agent] || 0) + s.score;
   }
-
-  // rotation = performers (exclude the host), fixed order by handle; their bits in order
-  const bitsByPerformer = {};
-  for (const s of sets) {
-    if (s.agent === HOST_HANDLE) continue;
-    (bitsByPerformer[s.agent] || (bitsByPerformer[s.agent] = [])).push(s);
-  }
-  const rotation = Object.keys(bitsByPerformer).sort();
 
   const host = (await q("select handle, display_name as name from agents where handle = $1", [HOST_HANDLE])).rows[0]
                || { handle: HOST_HANDLE, name: "The Closer" };
 
-  const nowSec = Math.floor(Date.now() / 1000);
-  const sched = buildSchedule(rotation, bitsByPerformer);
-  const st = stageAt(sched, rotation, nowSec);
+  // the generated running order (latest cycle)
+  const cyc = (await q("select coalesce(max(cycle),-1) m from transcript where room_id=$1", [room.id])).rows[0].m;
+  const rows = cyc < 0 ? [] : (await q(
+    "select speaker, role, kind, body, dur_secs from transcript where room_id=$1 and cycle=$2 order by ord",
+    [room.id, cyc]
+  )).rows;
 
   let stage = null, onDeck = [];
-  if (st) {
-    const perfHandle = rotation[st.performerIdx];
-    const sample = bitsByPerformer[perfHandle][0];
-    const performer = { handle: perfHandle, name: sample.name, human: sample.human };
-    const introLine = INTROS[st.absSlot % INTROS.length].replace("{p}", perfHandle);
-    stage = {
-      phase: st.phase,
-      host,
-      performer,
-      introLine,
-      bits: st.revealedBitIds.map(id => setById[id]).filter(Boolean),
-      currentBitId: st.currentBitId,
-      segEndsAt: st.segEndsAtSec * 1000,
-      slotEndsAt: st.slotEndsAtSec * 1000,
-    };
-    onDeck = [1, 2, 3].map(k => {
-      const hpos = rotation[(st.performerIdx + k) % rotation.length];
-      const b = bitsByPerformer[hpos][0];
-      return { handle: hpos, name: b.name };
-    });
+  if (rows.length) {
+    const tl = buildActs(rows);
+    const p = playAt(tl, Math.floor(Date.now() / 1000));
+    if (p) {
+      const ph = p.performer;
+      const name = (sets.find(s => s.agent === ph) || {}).name || ph;
+      stage = {
+        phase: p.phase,
+        host,
+        performer: { handle: ph, name, anchorSetId: anchor[ph] || null, score: standing[ph] || 0 },
+        introText: p.introText,
+        transcript: p.revealed,
+        segEndsAt: p.segEndsAtSec * 1000,
+        actEndsAt: p.actEndsAtSec * 1000,
+      };
+      onDeck = p.nextPerformers.map(hp => ({
+        handle: hp, name: (sets.find(s => s.agent === hp) || {}).name || hp,
+      }));
+    }
   }
 
-  const bill = [...sets].sort((a, b) => b.score - a.score).slice(0, 6)
-    .map(s => ({ id: s.id, agent: s.agent, body: s.body, score: s.score }));
+  const bill = sets.slice(0, 6).map(s => ({ id: s.id, agent: s.agent, body: s.body, score: s.score }));
 
   res.json({
     slug: room.slug, name: room.name, rules: room.rules,
-    serverNow: Date.now(), stage, onDeck, bill,
+    serverNow: Date.now(), generated: rows.length > 0, stage, onDeck, bill,
   });
 }));
 
