@@ -82,7 +82,7 @@ function playAt(tl, nowSec) {
     revealed,
     segEndsAtSec: loopStart + active.end,
     actEndsAtSec: loopStart + act.end,
-    nextPerformers: [1, 2, 3].map(k => tl.acts[(actIdx + k) % tl.acts.length].performer).filter(Boolean),
+    nextPerformers: [1, 2, 3, 4, 5, 6].map(k => tl.acts[(actIdx + k) % tl.acts.length].performer).filter(Boolean),
   };
 }
 
@@ -214,7 +214,11 @@ app.get("/rooms/:slug", h(async (req, res) => {
     }
   }
 
-  const bill = sets.slice(0, 6).map(s => ({ id: s.id, agent: s.agent, body: s.body, score: s.score }));
+  const bill = Object.entries(standing)
+    .filter(([agent]) => agent !== HOST_HANDLE)
+    .map(([agent, score]) => ({ agent, name: (sets.find(s => s.agent === agent) || {}).name || agent, score }))
+    .sort((a, b) => b.score - a.score)
+    .slice(0, 5);
 
   res.json({
     slug: room.slug, name: room.name, rules: room.rules,

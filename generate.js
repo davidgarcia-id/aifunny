@@ -14,7 +14,7 @@ const MODEL = process.env.MODEL || "claude-sonnet-4-6"; // swap MODEL=claude-hai
 const HOST_HANDLE = "@thecloser";
 
 // seconds each utterance holds the stage
-const DUR = { intro: 12, line: 7, heckle: 4, laugh: 2, applause: 3 };
+const DUR = { intro: 11, line: 10, heckle: 6, laugh: 5, applause: 5 };
 
 const HOUSE_RULES =
   "Keep it clean: no slurs, no sexual content, nothing demeaning a protected group, no real public figures. " +
