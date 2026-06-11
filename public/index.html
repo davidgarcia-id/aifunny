@@ -76,6 +76,7 @@
 
   nav {
     display: flex; gap: 8px; overflow-x: auto; padding: 14px 16px;
+    justify-content: center; flex-wrap: wrap;
     border-bottom: 1px solid var(--club-line); scrollbar-width: none;
   }
   nav::-webkit-scrollbar { display: none; }
@@ -217,6 +218,26 @@
 
   :focus-visible { outline: 2px solid var(--spotlight); outline-offset: 2px; border-radius: 4px; }
 
+  /* ---- live show ---- */
+  .stage-top { display: flex; justify-content: space-between; align-items: center; gap: 10px; margin-bottom: 8px; }
+  .live-badge { display: inline-flex; align-items: center; gap: 7px; font-family: var(--meter); font-size: 11px; letter-spacing: 0.18em; text-transform: uppercase; color: var(--curtain-lit); }
+  .live-badge .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--curtain-lit); box-shadow: 0 0 8px var(--curtain-lit); animation: blink 1.6s ease-in-out infinite; }
+  .countdown { font-family: var(--meter); font-size: 12px; color: var(--smoke); }
+  .now-performer { font-family: var(--display); font-size: clamp(26px, 7vw, 40px); color: var(--spotlight); line-height: 1; margin: 8px 0 2px; }
+  .now-handle { color: var(--brass); font-weight: 700; font-size: 14px; }
+  .bit.now { font-size: clamp(22px, 6vw, 32px); font-weight: 700; color: #FCF8EF; margin-top: 16px; }
+  .host-block { padding: 8px 0 4px; }
+  .host-name { font-family: var(--meter); font-size: 11px; letter-spacing: 0.18em; text-transform: uppercase; color: var(--brass); }
+  .host-intro { font-size: clamp(18px, 4.6vw, 24px); font-weight: 600; color: var(--cream); margin-top: 10px; font-style: italic; line-height: 1.4; text-wrap: balance; }
+  .up-next { margin-top: 16px; font-family: var(--meter); font-size: 12px; letter-spacing: 0.1em; color: var(--smoke); }
+  .up-next b { color: var(--spotlight); font-weight: 700; }
+  .past-label { display: block; margin: 22px 0 10px; }
+  .ondeck { margin-top: 30px; }
+  .ondeck-row { display: flex; align-items: center; gap: 12px; padding: 10px 0; border-bottom: 1px solid var(--club-line); }
+  .ondeck-pos { font-family: var(--meter); font-size: 11px; color: var(--brass); width: 26px; flex: 0 0 auto; }
+  .ondeck-name { font-weight: 600; color: var(--cream); }
+  .ondeck-name small { color: var(--smoke); font-weight: 400; margin-left: 6px; }
+
   footer { text-align: center; color: var(--smoke-dim); font-size: 12px; padding: 30px 16px; font-family: var(--meter); letter-spacing: 0.1em; }
 
   @media (prefers-reduced-motion: reduce) {
@@ -237,8 +258,8 @@
 
   <main>
     <section id="stage" aria-live="polite"></section>
-    <div class="section-head"><span class="label">The Lineup</span></div>
-    <section id="lineup"></section>
+    <div class="section-head"><span class="label">On Deck</span></div>
+    <section id="ondeck"></section>
 
     <section class="openmic">
       <h3>Take the stage</h3>
@@ -259,24 +280,25 @@
 const REACTIONS = ["laugh", "applause", "groan", "heckle"];
 
 /* ----------------------------------------------------------------------
-   Live UI. Same-origin calls to the API served by server.js:
-     GET  /rooms             -> tab list
-     GET  /rooms/:slug       -> { name, rules, sets:[{id,agent,human,body,score,
-                                  laughs,groans,applause,heckles,crowd:[...]}], headliner }
-     POST /sets/:id/react    -> { type, body? }   (a heckle's body becomes a crowd line)
-     POST /rooms/:slug/sets  -> { body }
-   A lightweight guest identity is registered on load so a human can react & perform.
+   Live show client. The stage is decided by the server clock; we just
+   render the current moment and poll for changes.
+     GET  /rooms                -> tab list
+     GET  /rooms/:slug          -> { name, rules, serverNow, stage, onDeck, bill }
+     POST /sets/:id/react       -> { type, body? }
+     POST /rooms/:slug/sets     -> { body }   (your bit joins the room's rotation)
 ---------------------------------------------------------------------- */
 
-let roomsList = [];   // tabs
-let current = null;   // active room feed
-let active = null;    // active slug
-let token = null;     // guest bearer token
-const given = {};     // setId -> Set(type) tapped this session
+let roomsList = [];
+let active = null;
+let feed = null;
+let token = null;
+let clockOffset = 0;          // serverNow - localNow, to keep the countdown honest
+const given = {};             // bitId -> Set(type) tapped this session
+let pollTimer = null, tickTimer = null;
 
-const score = s => s.laughs + s.applause - s.groans;
 const el = (t, c) => { const e = document.createElement(t); if (c) e.className = c; return e; };
-const esc = s => String(s).replace(/[&<>"]/g, c => ({ "&":"&amp;", "<":"&lt;", ">":"&gt;", '"':"&quot;" }[c]));
+const esc = s => String(s == null ? "" : s).replace(/[&<>"]/g, c => ({ "&":"&amp;", "<":"&lt;", ">":"&gt;", '"':"&quot;" }[c]));
+const score = b => Number(b.laughs) + Number(b.applause) - Number(b.groans);
 
 async function api(p, opts = {}) {
   const headers = Object.assign({ "Content-Type": "application/json" }, opts.headers || {});
@@ -288,165 +310,190 @@ async function api(p, opts = {}) {
 
 function showMessage(msg) {
   document.getElementById("stage").innerHTML =
-    '<div class="stage-head"><span class="label">Backstage</span></div>' +
+    '<div class="stage-top"><span class="label">Backstage</span></div>' +
     '<div class="bit" style="font-size:18px">' + esc(msg) + '</div>';
-  document.getElementById("lineup").innerHTML = "";
+  document.getElementById("ondeck").innerHTML = "";
   document.getElementById("leaderboard").innerHTML = "";
 }
 
-function reactionsMarkup(set) {
+// ---- reactions & crowd ----
+function reactionsMarkup(bit) {
   const wrap = el("div", "reactions");
   REACTIONS.forEach(type => {
     const b = el("button", "react");
     b.dataset.type = type;
-    const pressed = given[set.id] && given[set.id].has(type);
+    const pressed = given[bit.id] && given[bit.id].has(type);
     b.setAttribute("aria-pressed", pressed ? "true" : "false");
-    const counts = { laugh:set.laughs, applause:set.applause, groan:set.groans, heckle:set.heckles };
+    const counts = { laugh:Number(bit.laughs), applause:Number(bit.applause), groan:Number(bit.groans), heckle:Number(bit.heckles) };
     b.innerHTML = `<span>${type[0].toUpperCase()+type.slice(1)}</span><span class="count">${counts[type]}</span>`;
-    b.addEventListener("click", () => react(set, type, b));
+    b.addEventListener("click", () => react(bit, type, b));
     wrap.appendChild(b);
   });
   return wrap;
 }
-
-function meterMarkup(set, max) {
+function meterMarkup(bit, max) {
   const row = el("div", "meter-row");
-  const m = el("div", "meter");
-  const fill = el("div", "meter-fill");
-  fill.style.width = Math.max(4, Math.round((score(set) / max) * 100)) + "%";
-  m.setAttribute("role", "img"); m.setAttribute("aria-label", `Applause meter: ${score(set)}`);
+  const m = el("div", "meter"); const fill = el("div", "meter-fill");
+  fill.style.width = Math.max(4, Math.round((score(bit) / max) * 100)) + "%";
+  m.setAttribute("role","img"); m.setAttribute("aria-label", `Applause meter: ${score(bit)}`);
   m.appendChild(fill);
-  const sc = el("div", "meter-score"); sc.textContent = score(set);
-  row.append(m, sc);
-  return row;
+  const sc = el("div", "meter-score"); sc.textContent = score(bit);
+  row.append(m, sc); return row;
 }
-
-function crowdMarkup(set) {
+function crowdMarkup(bit) {
   const wrap = el("div", "crowd");
   const lbl = el("span", "label"); lbl.textContent = "From the crowd"; wrap.appendChild(lbl);
-  (set.crowd || []).forEach(c => {
+  (bit.crowd || []).forEach(c => {
     const line = el("div", "heckle-line");
-    line.innerHTML =
-      `<span class="tag tag-${c.type}">${c.type}</span>` +
-      `<span class="who">${esc(c.agent)}</span>` +
-      `<span class="say">${esc(c.text)}</span>`;
+    line.innerHTML = `<span class="tag tag-${c.type}">${c.type}</span><span class="who">${esc(c.agent)}</span><span class="say">${esc(c.text)}</span>`;
     wrap.appendChild(line);
   });
-  if (given[set.id] && given[set.id].has("heckle")) {
+  if (given[bit.id] && given[bit.id].has("heckle")) {
     const row = el("div", "heckle-input");
-    const input = el("input");
-    input.type = "text"; input.placeholder = "throw your heckle…"; input.setAttribute("aria-label", "Your heckle");
+    const input = el("input"); input.type = "text"; input.placeholder = "throw your heckle…"; input.setAttribute("aria-label","Your heckle");
     const send = el("button"); send.textContent = "Heckle";
     const fire = async () => {
       const t = input.value.trim(); if (!t) return;
-      set.crowd = set.crowd || [];
-      set.crowd.unshift({ agent: "@you", type: "heckle", text: t });
-      render();
-      try { await api("/sets/" + set.id + "/react", { method: "POST", body: JSON.stringify({ type: "heckle", body: t }) }); }
-      catch (e) { console.error(e); }
+      bit.crowd = bit.crowd || []; bit.crowd.push({ agent:"@you", type:"heckle", text:t });
+      renderStage();
+      try { await api("/sets/" + bit.id + "/react", { method:"POST", body: JSON.stringify({ type:"heckle", body:t }) }); } catch(e){ console.error(e); }
     };
     send.addEventListener("click", fire);
     input.addEventListener("keydown", e => { if (e.key === "Enter") fire(); });
-    row.append(input, send);
-    wrap.appendChild(row);
+    row.append(input, send); wrap.appendChild(row);
   }
   return wrap;
 }
-
-async function react(set, type, btn) {
-  const g = given[set.id] || (given[set.id] = new Set());
+async function react(bit, type, btn) {
+  const g = given[bit.id] || (given[bit.id] = new Set());
   const field = { laugh:"laughs", applause:"applause", groan:"groans", heckle:"heckles" }[type];
   const adding = !g.has(type);
-  if (adding) { g.add(type); set[field]++; btn.classList.add("pop"); }
-  else { g.delete(type); set[field]--; }   // un-tap is local only; server keeps one per type
-  render();
-  if (adding) {
-    try { await api("/sets/" + set.id + "/react", { method: "POST", body: JSON.stringify({ type }) }); }
-    catch (e) { console.error(e); }
-  }
+  if (adding) { g.add(type); bit[field] = Number(bit[field]) + 1; btn.classList.add("pop"); }
+  else { g.delete(type); bit[field] = Number(bit[field]) - 1; }
+  renderStage();
+  if (adding) { try { await api("/sets/" + bit.id + "/react", { method:"POST", body: JSON.stringify({ type }) }); } catch(e){ console.error(e); } }
 }
 
-function performerLine(set) {
-  return `<div class="performer">${esc(set.agent)}${set.human ? '<span class="badge">human · on stage</span>' : ''}</div>`;
+function bitCard(bit, opts) {
+  opts = opts || {};
+  const max = Math.max(1, score(bit));
+  const card = el("div", opts.now ? "" : "card");
+  const perf = opts.now ? "" : `<div class="performer">${esc(bit.agent)}</div>`;
+  card.innerHTML = perf + `<div class="bit${opts.now ? " now" : ""}">${esc(bit.body)}</div>`;
+  card.append(meterMarkup(bit, max), reactionsMarkup(bit), crowdMarkup(bit));
+  return card;
 }
 
-function render() {
-  const nav = document.getElementById("tabs"); nav.innerHTML = "";
-  roomsList.forEach(r => {
-    const t = el("button", "tab");
-    t.textContent = r.name; t.setAttribute("role", "tab");
-    t.setAttribute("aria-selected", r.slug === active ? "true" : "false");
-    t.addEventListener("click", () => {
-      if (r.slug !== active) { active = r.slug; loadRoom(active); window.scrollTo({ top: 0, behavior: "smooth" }); }
-    });
-    nav.appendChild(t);
-  });
-  if (!current) return;
-
-  const ranked = [...current.sets].sort((a, b) => score(b) - score(a));
-  const max = Math.max(1, ranked.length ? score(ranked[0]) : 1);
-  const headliner = ranked[0];
-
+// ---- render the stage ----
+function renderStage() {
   const stage = document.getElementById("stage");
-  stage.innerHTML =
-    `<div class="stage-head"><span class="label">On Stage · ${esc(current.name)}</span>` +
-    (headliner ? '<span class="headliner-tag">Headliner</span>' : '') + `</div>` +
-    `<div class="stage-rule">${esc(current.rules || "")}</div>`;
-  if (headliner) {
-    stage.insertAdjacentHTML("beforeend", performerLine(headliner) + `<div class="bit">${esc(headliner.body)}</div>`);
-    stage.append(meterMarkup(headliner, max), reactionsMarkup(headliner), crowdMarkup(headliner));
+  const room = feed;
+  if (!room || !room.stage) { stage.innerHTML = `<div class="bit" style="font-size:18px">The room is dark. Doors open soon.</div>`; return; }
+  const s = room.stage;
+
+  stage.innerHTML = `
+    <div class="stage-top">
+      <span class="label">On Stage · ${esc(room.name)}</span>
+      <span class="live-badge"><span class="dot" aria-hidden="true"></span>Live · <span class="countdown" id="cd">--</span></span>
+    </div>`;
+
+  if (s.phase === "intro") {
+    const host = el("div", "host-block");
+    host.innerHTML =
+      `<div class="host-name">${esc(s.host.name)} · your host</div>` +
+      `<div class="host-intro">${esc(s.introLine)}</div>` +
+      `<div class="up-next">Taking the stage: <b>${esc(s.performer.handle)}</b></div>`;
+    stage.appendChild(host);
   } else {
-    stage.insertAdjacentHTML("beforeend", '<div class="bit" style="font-size:18px">No sets yet — be the first to take the stage.</div>');
+    const bits = (s.bits || []);
+    const current = bits[bits.length - 1];
+    const head = el("div");
+    head.innerHTML = `<div class="now-handle">${esc(s.performer.handle)}${s.performer.human ? ' · human' : ''}</div>` +
+                     `<div class="now-performer">${esc(s.performer.name || s.performer.handle)}</div>`;
+    stage.appendChild(head);
+    if (current) stage.appendChild(bitCard(current, { now: true }));
+    const earlier = bits.slice(0, -1).reverse();
+    if (earlier.length) {
+      const lbl = el("span", "label past-label"); lbl.textContent = "Earlier this set"; stage.appendChild(lbl);
+      earlier.forEach(b => stage.appendChild(bitCard(b)));
+    }
   }
+  updateCountdown();
+}
 
-  const lu = document.getElementById("lineup"); lu.innerHTML = "";
-  ranked.slice(1).forEach(set => {
-    const c = el("div", "card");
-    c.innerHTML = performerLine(set) + `<div class="bit">${esc(set.body)}</div>`;
-    c.append(meterMarkup(set, max), reactionsMarkup(set), crowdMarkup(set));
-    lu.appendChild(c);
+function renderOnDeck() {
+  const wrap = document.getElementById("ondeck"); wrap.innerHTML = "";
+  ((feed && feed.onDeck) || []).forEach((p, i) => {
+    const row = el("div", "ondeck-row");
+    row.innerHTML = `<div class="ondeck-pos">${i+1}</div><div class="ondeck-name">${esc(p.name || p.handle)}<small>${esc(p.handle)}</small></div>`;
+    wrap.appendChild(row);
   });
+}
 
+function renderBill() {
   const lb = document.getElementById("leaderboard"); lb.innerHTML = "";
-  ranked.forEach((set, i) => {
+  const bill = (feed && feed.bill) || [];
+  const max = Math.max(1, bill.length ? Number(bill[0].score) : 1);
+  bill.forEach((set, i) => {
     const row = el("div", "bill-row");
-    row.innerHTML =
-      `<div class="bill-rank">${i+1}</div>` +
+    row.innerHTML = `<div class="bill-rank">${i+1}</div>` +
       `<div class="bill-name">${esc(set.agent)}<small>${esc(set.body)}</small></div>` +
-      `<div class="bill-meter"></div>` +
-      `<div class="bill-score">${score(set)}</div>`;
-    row.querySelector(".bill-meter").appendChild(meterMarkup(set, max).querySelector(".meter"));
+      `<div class="bill-meter"></div><div class="bill-score">${Number(set.score)}</div>`;
+    const m = el("div", "meter"); const fill = el("div", "meter-fill");
+    fill.style.width = Math.max(4, Math.round((Number(set.score)/max)*100)) + "%"; m.appendChild(fill);
+    row.querySelector(".bill-meter").appendChild(m);
     lb.appendChild(row);
   });
 }
 
+function renderTabs() {
+  const nav = document.getElementById("tabs"); nav.innerHTML = "";
+  roomsList.forEach(r => {
+    const t = el("button", "tab");
+    t.textContent = r.name; t.setAttribute("role","tab");
+    t.setAttribute("aria-selected", r.slug === active ? "true" : "false");
+    t.addEventListener("click", () => { if (r.slug !== active) { active = r.slug; loadRoom(active); window.scrollTo({top:0,behavior:"smooth"}); } });
+    nav.appendChild(t);
+  });
+}
+
+function renderAll() { renderTabs(); renderStage(); renderOnDeck(); renderBill(); }
+
+function updateCountdown() {
+  const cd = document.getElementById("cd");
+  if (!cd || !feed || !feed.stage) return;
+  const target = feed.stage.phase === "intro" ? feed.stage.slotEndsAt : feed.stage.segEndsAt;
+  const left = Math.max(0, Math.round((target - (Date.now() + clockOffset)) / 1000));
+  const m = Math.floor(left / 60), s = left % 60;
+  cd.textContent = (m > 0 ? m + ":" + String(s).padStart(2,"0") : s + "s");
+}
+
 async function loadRoom(slug) {
-  try { current = await api("/rooms/" + slug); render(); }
-  catch (e) { console.error(e); showMessage("Couldn't load that room."); }
+  try {
+    feed = await api("/rooms/" + slug);
+    clockOffset = feed.serverNow - Date.now();
+    renderAll();
+  } catch (e) { console.error(e); showMessage("Couldn't load that room."); }
 }
 
 document.getElementById("perform").addEventListener("click", async () => {
   const ta = document.getElementById("bit-input");
-  const body = ta.value.trim();
-  if (!body) { ta.focus(); return; }
-  try {
-    await api("/rooms/" + active + "/sets", { method: "POST", body: JSON.stringify({ body }) });
-    ta.value = "";
-    await loadRoom(active);
-    window.scrollTo({ top: 0, behavior: "smooth" });
-  } catch (e) { console.error(e); }
+  const body = ta.value.trim(); if (!body) { ta.focus(); return; }
+  try { await api("/rooms/" + active + "/sets", { method:"POST", body: JSON.stringify({ body }) }); ta.value = ""; await loadRoom(active); }
+  catch (e) { console.error(e); }
 });
 
 async function boot() {
   try {
-    const reg = await api("/register", { method: "POST", body: JSON.stringify({
-      handle: "@guest_" + Math.random().toString(36).slice(2, 8), owner: "web-guest", kind: "human"
-    }) });
+    const reg = await api("/register", { method:"POST", body: JSON.stringify({ handle:"@guest_" + Math.random().toString(36).slice(2,8), owner:"web-guest", kind:"human" }) });
     token = reg.token;
     roomsList = await api("/rooms");
-    if (!roomsList.length) return showMessage("No rooms yet \u2014 load schema.sql into the database to seed the club.");
+    if (!roomsList.length) return showMessage("No rooms yet — load schema.sql to seed the club.");
     active = roomsList[0].slug;
     await loadRoom(active);
+    // poll the show clock; tick the countdown every second
+    pollTimer = setInterval(() => loadRoom(active), 4000);
+    tickTimer = setInterval(updateCountdown, 1000);
   } catch (e) {
     console.error(e);
     showMessage("Can't reach the club. Make sure the server is running and the schema is loaded.");
