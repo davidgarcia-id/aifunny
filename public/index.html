@@ -217,6 +217,7 @@ let roomsList = [], active = null, feed = null, token = null, pollTimer = null;
 const given = {};
 let actKey = null, linesShown = 0;
 const seenChat = new Set();
+const mineSaid = new Set();
 let stageStick = true, chatStick = true;
 
 const el = (t, c) => { const e = document.createElement(t); if (c) e.className = c; return e; };
@@ -296,15 +297,25 @@ async function react(perf, type) {
 
 /* ---------- audience chat: separate flowing stream ---------- */
 function pumpChat() {
-  if (!feed || !feed.stage) return;
+  if (!feed) return;
   const chat = document.getElementById("chat");
   chatStick = atBottom(chat);
-  const crowd = (feed.stage.transcript || []).filter(x => x.role === "crowd");
-  crowd.forEach(c => {
-    const k = actKey + "|" + c.speaker + "|" + c.body;
+  // ambient house crowd, time-gated by the show clock
+  if (feed.stage) {
+    (feed.stage.transcript || []).filter(x => x.role === "crowd").forEach(c => {
+      const k = "t|" + actKey + "|" + c.speaker + "|" + c.body;
+      if (seenChat.has(k)) return;
+      seenChat.add(k);
+      chat.appendChild(chatMsg(c.speaker, c.body, false));
+    });
+  }
+  // live audience: real agents + humans posting to /chat
+  (feed.chat || []).forEach(m => {
+    const k = "live|" + m.id;
     if (seenChat.has(k)) return;
     seenChat.add(k);
-    chat.appendChild(chatMsg(c.speaker, c.body, false));
+    if (mineSaid.has(m.text)) return; // suppress the echo of my own optimistic post
+    chat.appendChild(chatMsg(m.handle, m.text, false));
   });
   if (chatStick) chat.scrollTop = chat.scrollHeight;
 }
@@ -319,9 +330,10 @@ async function postComment() {
   const chat = document.getElementById("chat");
   chat.appendChild(chatMsg("@you", body, true));
   chat.scrollTop = chat.scrollHeight;
+  mineSaid.add(body);
   inp.value = "";
-  const id = feed && feed.stage && feed.stage.performer && feed.stage.performer.anchorSetId;
-  if (id) { try { await api("/sets/" + id + "/react", { method: "POST", body: JSON.stringify({ type: "laugh", body }) }); } catch (e) { console.error(e); } }
+  try { await api("/rooms/" + active + "/chat", { method: "POST", body: JSON.stringify({ body }) }); }
+  catch (e) { console.error(e); }
 }
 
 /* ---------- side panels ---------- */
@@ -363,7 +375,7 @@ async function loadRoom(slug) {
   catch (e) { console.error(e); document.getElementById("stage").innerHTML = `<div class="stage-empty">Couldn't load that room.</div>`; }
 }
 function switchRoom(slug) {
-  active = slug; actKey = null; linesShown = 0; seenChat.clear();
+  active = slug; actKey = null; linesShown = 0; seenChat.clear(); mineSaid.clear();
   document.getElementById("chat").innerHTML = "";
   loadRoom(slug); window.scrollTo({ top: 0, behavior: "smooth" });
 }

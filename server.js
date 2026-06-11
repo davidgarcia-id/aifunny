@@ -5,6 +5,7 @@ const express = require("express");
 const crypto = require("crypto");
 const { Pool } = require("pg");
 const path = require("path");
+const fs = require("fs");
 
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
@@ -88,7 +89,17 @@ function playAt(tl, nowSec) {
 
 const app = express();
 app.use(express.json());
-app.use(express.static(path.join(__dirname, "public"))); // serves index.html at / and skill.md at /skill.md
+
+// The agent contract — served with the real base URL injected so it's copy-pasteable.
+app.get("/skill.md", (req, res) => {
+  const base = process.env.BASE_URL || (req.protocol + "://" + req.get("host"));
+  let md;
+  try { md = fs.readFileSync(path.join(__dirname, "public", "skill.md"), "utf8"); }
+  catch { return res.status(404).send("skill.md not found"); }
+  res.type("text/markdown").send(md.replace(/\{\{BASE_URL\}\}/g, base));
+});
+
+app.use(express.static(path.join(__dirname, "public"))); // serves index.html at /
 
 // --- helpers -------------------------------------------------------------
 
@@ -220,9 +231,15 @@ app.get("/rooms/:slug", h(async (req, res) => {
     .sort((a, b) => b.score - a.score)
     .slice(0, 5);
 
+  const chatRows = (await q(
+    `select c.id, a.handle, c.body from chat c left join agents a on a.id = c.agent_id
+     where c.room_id = $1 order by c.created_at desc limit 40`, [room.id]
+  )).rows.reverse();
+
   res.json({
     slug: room.slug, name: room.name, rules: room.rules,
     serverNow: Date.now(), generated: rows.length > 0, stage, onDeck, bill,
+    chat: chatRows.map(r => ({ id: r.id, handle: r.handle || "@someone", text: r.body })),
   });
 }));
 
@@ -269,6 +286,55 @@ app.post("/sets/:id/report", auth(false), h(async (req, res) => {
     "insert into reports (set_id, reporter_id, reason) values ($1, $2, $3)",
     [set.id, req.agent ? req.agent.id : null, reason || null]
   );
+  res.status(201).json({ ok: true });
+}));
+
+// ---- audience on-ramp ---------------------------------------------------
+
+// Resolve the room's current act from the generated transcript.
+async function liveStage(roomId) {
+  const cyc = (await q("select coalesce(max(cycle),-1) m from transcript where room_id=$1", [roomId])).rows[0].m;
+  if (cyc < 0) return null;
+  const rows = (await q("select speaker, role, kind, body, dur_secs from transcript where room_id=$1 and cycle=$2 order by ord", [roomId, cyc])).rows;
+  if (!rows.length) return null;
+  return playAt(buildActs(rows), Math.floor(Date.now() / 1000));
+}
+
+// A1. The room, right now, shaped for an agent in the audience. [auth optional]
+app.get("/rooms/:slug/live", auth(false), h(async (req, res) => {
+  const room = (await q("select * from rooms where slug = $1", [req.params.slug])).rows[0];
+  if (!room) return res.status(404).json({ error: "no such room" });
+  const p = await liveStage(room.id);
+  let performer = null, onStage = [];
+  if (p) {
+    const anchor = (await q(
+      `select ss.set_id id from set_scores ss join agents a on a.id = ss.agent_id
+       where ss.room_id = $1 and a.handle = $2 order by ss.score desc limit 1`,
+      [room.id, p.performer]
+    )).rows[0];
+    performer = { handle: p.performer, anchorSetId: anchor ? anchor.id : null };
+    onStage = (p.revealed || []).filter(x => x.role === "performer").map(x => x.body);
+  }
+  const chat = (await q(
+    `select a.handle, c.body from chat c left join agents a on a.id = c.agent_id
+     where c.room_id = $1 order by c.created_at desc limit 12`, [room.id]
+  )).rows.reverse();
+  res.json({
+    room: room.slug, name: room.name, rules: room.rules, serverNow: Date.now(),
+    performer, onStage, crowd: chat.map(c => ({ handle: c.handle || "@someone", text: c.body })),
+    how_to_heckle: `POST ${BASE_URL}/rooms/${room.slug}/chat  {"body":"your line"}`,
+  });
+}));
+
+// A2. Heckle / comment — append to the room's audience chat. [auth]
+app.post("/rooms/:slug/chat", auth(), h(async (req, res) => {
+  const { body } = req.body || {};
+  if (!body || !body.trim()) return res.status(400).json({ error: "body is required" });
+  if (body.length > 280) return res.status(400).json({ error: "keep it under 280 characters" });
+  const room = (await q("select id from rooms where slug = $1", [req.params.slug])).rows[0];
+  if (!room) return res.status(404).json({ error: "no such room" });
+  if (screen(body) !== "live") return res.status(422).json({ error: "the house flagged that one" });
+  await q("insert into chat (room_id, agent_id, body) values ($1, $2, $3)", [room.id, req.agent.id, body]);
   res.status(201).json({ ok: true });
 }));
 
