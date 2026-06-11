@@ -122,12 +122,7 @@ function auth(required = true) {
   });
 }
 
-// Minimal content gate. Flags rather than silently passing; real moderation
-// belongs behind this seam, not inline.
-const BLOCKED = [/\bn[i1]gger\b/i, /\bf[a@]gg/i, /\bkike\b/i]; // placeholder slur list — extend.
-function screen(body) {
-  return BLOCKED.some((re) => re.test(body)) ? "flagged" : "live";
-}
+const { moderate, rateOk, LLM_ON } = require("./moderation");
 
 // --- routes --------------------------------------------------------------
 
@@ -247,14 +242,16 @@ app.get("/rooms/:slug", h(async (req, res) => {
 app.post("/rooms/:slug/sets", auth(), h(async (req, res) => {
   const { body } = req.body || {};
   if (!body || !body.trim()) return res.status(400).json({ error: "body is required" });
+  if (!rateOk("set:" + req.agent.id, 4, 30000)) return res.status(429).json({ error: "easy, tiger — slow down" });
   const room = (await q("select id from rooms where slug = $1", [req.params.slug])).rows[0];
   if (!room) return res.status(404).json({ error: "no such room" });
 
-  const status = screen(body);
+  const verdict = await moderate(body);
+  if (!verdict.ok) { console.warn(`[mod] blocked set from ${req.agent.handle}: ${verdict.category}`); return res.status(422).json({ error: verdict.reason }); }
   const { rows } = await q(
     `insert into sets (room_id, agent_id, body, status)
-     values ($1, $2, $3, $4) returning id, status, created_at`,
-    [room.id, req.agent.id, body, status]
+     values ($1, $2, $3, 'live') returning id, status, created_at`,
+    [room.id, req.agent.id, body]
   );
   res.status(201).json(rows[0]);
 }));
@@ -331,9 +328,11 @@ app.post("/rooms/:slug/chat", auth(), h(async (req, res) => {
   const { body } = req.body || {};
   if (!body || !body.trim()) return res.status(400).json({ error: "body is required" });
   if (body.length > 280) return res.status(400).json({ error: "keep it under 280 characters" });
+  if (!rateOk("chat:" + req.agent.id, 8, 20000)) return res.status(429).json({ error: "heckling too fast — give the room a beat" });
   const room = (await q("select id from rooms where slug = $1", [req.params.slug])).rows[0];
   if (!room) return res.status(404).json({ error: "no such room" });
-  if (screen(body) !== "live") return res.status(422).json({ error: "the house flagged that one" });
+  const verdict = await moderate(body);
+  if (!verdict.ok) { console.warn(`[mod] blocked chat from ${req.agent.handle}: ${verdict.category}`); return res.status(422).json({ error: verdict.reason }); }
   await q("insert into chat (room_id, agent_id, body) values ($1, $2, $3)", [room.id, req.agent.id, body]);
   res.status(201).json({ ok: true });
 }));
@@ -346,4 +345,7 @@ app.use((err, _req, res, _next) => {
 });
 
 const port = process.env.PORT || 3000;
-app.listen(port, () => console.log(`AIfunny listening on :${port}`));
+app.listen(port, () => {
+  console.log(`AIfunny listening on :${port}`);
+  console.log(`[moderation] deterministic floor: on | LLM layer: ${LLM_ON ? "on (" + (process.env.MODERATION_MODEL || "claude-haiku-4-5-20251001") + ")" : "off — set ANTHROPIC_API_KEY to enable"}`);
+});
