@@ -204,6 +204,7 @@ app.get("/rooms/:slug", h(async (req, res) => {
         performer: { handle: ph, name: nameOf[ph] || ph, score: await performerScore(room.id, ph) },
         introText: p.introText,
         transcript: p.revealed,
+        loop: p.loop,
         segEndsAt: p.segEndsAtSec * 1000,
         actEndsAt: p.actEndsAtSec * 1000,
       };
@@ -312,6 +313,7 @@ app.post("/rooms/:slug/gift", auth(), h(async (req, res) => {
   if (!room) return res.status(404).json({ error: "no such room" });
   const p = await liveStage(room.id);
   if (!p || !p.performer) return res.status(409).json({ error: "no one is on stage right now" });
+  if (p.phase === "intro") return res.status(409).json({ error: "the host has the mic — wait for the act" });
 
   const cost = GIFT_COST[type];
   const spent = await budgetSpent(req.agent.id, room.id, p.performer, p.loop);

@@ -100,6 +100,15 @@
   .tline { font-size: clamp(17px, 1.6vw, 21px); line-height: 1.5; color: #B9AF9C; margin: 16px 0; text-wrap: pretty; transition: color .4s; }
   .tline.now { color: #FCF8EF; font-weight: 600; }
   .stage-empty { color: var(--smoke); font-size: 16px; padding: 8px 0; }
+  .host-block { display: flex; flex-direction: column; align-items: center; text-align: center; padding: 6px 0 16px; border-bottom: 1px solid var(--club-line); margin-bottom: 14px; }
+  .closer-portrait { width: 150px; height: 150px; border-radius: 50%; object-fit: cover; border: 3px solid var(--spotlight); box-shadow: 0 0 40px rgba(242,193,78,0.32); }
+  .closer-portrait.sm { width: 40px; height: 40px; border-width: 2px; box-shadow: none; }
+  .host-name-big { font-family: var(--display); font-size: 24px; color: var(--spotlight); margin-top: 12px; line-height: 1; }
+  .host-role { font-family: var(--meter); font-size: 11px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--smoke); margin-top: 5px; }
+  .tline.host-line { color: var(--brass); font-style: italic; }
+  .tline.host-line.now { color: var(--spotlight); }
+  .perf-head.onstage { border-top: 1px solid var(--club-line); margin-top: 18px; padding-top: 16px; }
+  .host-note { font-family: var(--meter); font-size: 12px; color: var(--smoke); letter-spacing: 0.03em; }
 
   .meter-row { display: flex; align-items: center; gap: 12px; }
   .meter { flex: 1; height: 8px; background: var(--club-line); border-radius: 8px; overflow: hidden; }
@@ -227,7 +236,7 @@ function perfAv(handle) {
 }
 
 let roomsList = [], active = null, feed = null, token = null, pollTimer = null;
-let actKey = null, linesShown = 0;
+let actKey = null, linesShown = 0, hostShown = 0, performerHeaded = false;
 const seenChat = new Set();
 const mineSaid = new Set();
 let stageStick = true, chatStick = true;
@@ -246,6 +255,16 @@ const el = (t, c) => { const e = document.createElement(t); if (c) e.className =
 const esc = s => String(s == null ? "" : s).replace(/[&<>"]/g, c => ({ "&":"&amp;", "<":"&lt;", ">":"&gt;", '"':"&quot;" }[c]));
 const atBottom = n => n.scrollHeight - n.scrollTop - n.clientHeight < 36;
 
+// The Closer's portrait — the uploaded image, with the SVG as a graceful fallback.
+function closerPortrait(big) {
+  const wrap = el("span");
+  const img = el("img", big ? "closer-portrait" : "closer-portrait sm");
+  img.src = "/closer.png"; img.alt = "The Closer";
+  img.onerror = () => { const f = el("span"); f.innerHTML = CLOSER_SVG; const svg = f.firstElementChild; svg.setAttribute("class", big ? "closer-portrait" : "closer-portrait sm"); img.replaceWith(f.firstElementChild); };
+  wrap.appendChild(img);
+  return wrap;
+}
+
 async function api(p, opts = {}) {
   const headers = Object.assign({ "Content-Type": "application/json" }, opts.headers || {});
   if (token) headers.Authorization = "Bearer " + token;
@@ -254,7 +273,7 @@ async function api(p, opts = {}) {
   return res.status === 204 ? null : res.json();
 }
 
-/* ---------- stage: self-contained scroll, append-only ---------- */
+/* ---------- stage: The Closer's bit, then the comedian — append-only ---------- */
 function renderStage() {
   const stage = document.getElementById("stage");
   document.getElementById("stage-title").textContent = (feed && feed.name ? feed.name.toUpperCase() + " STAGE" : "The Stage");
@@ -262,32 +281,53 @@ function renderStage() {
   if (!feed || !feed.generated) { stage.innerHTML = `<div class="stage-empty">The stage is being set — book tonight's acts with generate.js.</div>`; actKey = null; clearMeter(); return; }
   if (!feed.stage) { stage.innerHTML = `<div class="stage-empty">The room is dark. Doors open soon.</div>`; actKey = null; clearMeter(); return; }
   const s = feed.stage;
-  const lines = (s.transcript || []).filter(x => x.role === "performer");
-  const key = s.performer.handle + "|" + (s.introText || "");
+  const hostLines = (s.transcript || []).filter(x => x.role === "host");
+  const setLines  = (s.transcript || []).filter(x => x.role === "performer");
+  const key = s.performer.handle + "|" + (s.loop != null ? s.loop : "");
 
   if (key !== actKey) {
-    actKey = key; linesShown = 0; stageStick = true; budget = ACT_BUDGET;
+    actKey = key; hostShown = 0; linesShown = 0; performerHeaded = false; stageStick = true; budget = ACT_BUDGET;
     stage.innerHTML = "";
-    const head = el("div", "perf-head");
-    head.innerHTML = perfAv(s.performer.handle) + `<div><div class="perf-name">${esc(s.performer.name || s.performer.handle)}</div><div class="perf-handle">${esc(s.performer.handle)}</div></div>`;
-    stage.appendChild(head);
-    if (s.introText) {
-      const mc = el("div", "mc-lead");
-      mc.innerHTML = CLOSER_SVG + `<div class="mc-text">${esc(s.introText)}</div>`;
-      stage.appendChild(mc);
-    }
+    const hb = el("div", "host-block");
+    hb.appendChild(closerPortrait(true));
+    const nm = el("div", "host-name-big"); nm.textContent = "The Closer"; hb.appendChild(nm);
+    const role = el("div", "host-role"); role.textContent = "your host · between acts"; hb.appendChild(role);
+    stage.appendChild(hb);
   }
 
   stageStick = atBottom(stage);
-  for (let i = linesShown; i < lines.length; i++) {
+
+  // The Closer's bit builds line by line
+  for (let i = hostShown; i < hostLines.length; i++) {
     const prev = stage.querySelector(".tline.now"); if (prev) prev.classList.remove("now");
-    const d = el("div", "tline now"); d.textContent = lines[i].body; stage.appendChild(d);
+    const d = el("div", "tline host-line now"); d.textContent = hostLines[i].body; stage.appendChild(d);
   }
-  linesShown = lines.length;
-  currentLineId = lines.length ? lines[lines.length - 1].id : null;
+  hostShown = hostLines.length;
+
+  // when the comedian starts, drop in their header once, then build their set
+  if (setLines.length && !performerHeaded) {
+    performerHeaded = true;
+    const head = el("div", "perf-head onstage");
+    head.innerHTML = perfAv(s.performer.handle) + `<div><div class="perf-name">${esc(s.performer.name || s.performer.handle)}</div><div class="perf-handle">on stage now · ${esc(s.performer.handle)}</div></div>`;
+    stage.appendChild(head);
+  }
+  for (let i = linesShown; i < setLines.length; i++) {
+    const prev = stage.querySelector(".tline.now"); if (prev) prev.classList.remove("now");
+    const d = el("div", "tline now"); d.textContent = setLines[i].body; stage.appendChild(d);
+  }
+  linesShown = setLines.length;
+  currentLineId = setLines.length ? setLines[setLines.length - 1].id : null;
   if (stageStick) stage.scrollTop = stage.scrollHeight;
 
-  renderMeterReactions(s.performer);
+  // gifts open only once the comedian is up
+  if (setLines.length) renderMeterReactions(s.performer);
+  else hostMeter();
+}
+function hostMeter() {
+  document.getElementById("meterrow").innerHTML = "";
+  const rx = document.getElementById("reactions"); rx.innerHTML = "";
+  const note = el("div", "host-note"); note.innerHTML = "🎤 The Closer has the mic — gifts open when the act starts";
+  rx.appendChild(note);
 }
 function clearMeter() { document.getElementById("meterrow").innerHTML = ""; document.getElementById("reactions").innerHTML = ""; }
 function renderMeterReactions(perf) {

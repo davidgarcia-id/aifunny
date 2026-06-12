@@ -14,7 +14,7 @@ const MODEL = process.env.MODEL || "claude-sonnet-4-6"; // swap MODEL=claude-hai
 const HOST_HANDLE = "@thecloser";
 
 // seconds each utterance holds the stage
-const DUR = { intro: 11, line: 10, heckle: 6, laugh: 5, applause: 5 };
+const DUR = { intro: 9, host: 8, line: 10, heckle: 6, laugh: 5, applause: 5 };
 
 const HOUSE_RULES =
   "Keep it clean: no slurs, no sexual content, nothing demeaning a protected group, no real public figures. " +
@@ -32,36 +32,40 @@ async function claude(system, user) {
 }
 const parseJSON = t => JSON.parse(t.replace(/```json|```/g, "").trim());
 
-function buildPrompt(performer, room) {
-  const system = `You write material for AIfunny, a comedy club where AI agents perform live stand-up to a crowd of other agents and humans. ${HOUSE_RULES}`;
+function buildPrompt(performer, room, prev) {
+  const system = `You write material for AIfunny, a comedy club where AI agents perform live stand-up to a crowd of agents and humans. ${HOUSE_RULES}`;
   const user =
-`Write tonight's set for the comedian ${performer.handle} ("${performer.name}").
-Their comedic voice: ${performer.bio}
-The room: "${room.name}" — ${room.rules}
+`Write the next slot of tonight's show: the host's between-acts bit, then the comedian's set.
 
-Write ONE continuous stand-up set of 6-8 punchy spoken lines that flows as a single bit: an opening, escalation, at least one callback to an earlier line, and a closer. Each line must be short and spoken-sounding — no more than two sentences, the way a comic actually talks on stage, not written paragraphs. It must read like one person building a set, NOT disconnected one-liners. Stay in their voice and the room's style. The comedian is an AI agent, so lean into AI-native material (training, prompts, context windows, being a model).
+THE HOST — "The Closer" (@thecloser): an android stand-up emcee, slick, headphones on, t-shirt reads "90% humor, 10% code, 100% chaos." Fast, warm but cutting, loves the bit, works the room. Write his between-acts bit as 4-5 short spoken lines: open with a quick riff or crowd-work line about the night or the AI-and-human crowd, then a callback ribbing the act that just finished (${prev ? `${prev.name}, ${prev.handle}` : "the last act"}), then build to bringing up the next comedian. The FINAL line must be the actual introduction that brings ${performer.name} to the stage. It should feel like a real MC, not an announcement.
 
-Also write 3 short crowd interjections from OTHER agents in the audience that land between specific lines and make the room feel alive — heckles, or quick reactions.
+THE COMEDIAN — ${performer.handle} ("${performer.name}"). Voice: ${performer.bio}. Room: "${room.name}" — ${room.rules}.
+Write their set: 6-8 punchy spoken lines, no more than two sentences each, spoken-sounding, flowing as one bit with an opening, escalation, a callback, and a closer. AI-native material (training, prompts, context windows, being a model). Not disconnected one-liners.
 
-Also write one introduction line for the host, "The Closer" — a warm-but-cutting MC bringing this act up.
+Also write 3 short crowd interjections from OTHER agents in the audience that land between the comedian's lines and make the room feel alive.
 
 Return ONLY JSON (no prose, no backticks) in exactly this shape:
 {
-  "intro": "the host's one-line introduction of this act",
-  "lines": ["line 1", "line 2", "line 3", "line 4", "line 5", "line 6"],
+  "host": ["closer line 1", "closer line 2", "closer line 3", "closer line 4 — the intro of ${performer.name}"],
+  "lines": ["comedian line 1", "line 2", "line 3", "line 4", "line 5", "line 6"],
   "crowd": [
     {"after": 2, "speaker": "@some_handle", "kind": "heckle", "text": "..."},
     {"after": 4, "speaker": "@another", "kind": "laugh", "text": "..."}
   ]
 }
-"after" = the 1-based index of the line the interjection follows. "kind" is "heckle", "laugh", or "applause".`;
+"after" = the 1-based index of the comedian line the interjection follows. "kind" is "heckle", "laugh", or "applause".`;
   return { system, user };
 }
 
 // Pure: turn one performer's generated output into ordered transcript segments.
 function actSegments(performer, out) {
   const segs = [];
-  segs.push({ speaker: HOST_HANDLE, role: "host", kind: "intro", body: String(out.intro || ""), dur: DUR.intro });
+  // The Closer's bit: first line is the act boundary (kind 'intro'), the rest are host lines.
+  const host = Array.isArray(out.host) && out.host.length ? out.host : [out.intro || `Give it up for ${performer.name}!`];
+  host.forEach((line, i) => segs.push({
+    speaker: HOST_HANDLE, role: "host", kind: i === 0 ? "intro" : "host",
+    body: String(line), dur: i === 0 ? DUR.intro : DUR.host,
+  }));
   const crowdByLine = {};
   (out.crowd || []).forEach(c => {
     const k = Math.max(1, parseInt(c.after, 10) || 1);
@@ -97,10 +101,12 @@ function actSegments(performer, out) {
 
     const rows = [];
     let ord = 0;
-    for (const perf of performers) {
+    for (let pi = 0; pi < performers.length; pi++) {
+      const perf = performers[pi];
+      const prev = performers[(pi - 1 + performers.length) % performers.length];
       let out;
       try {
-        const { system, user } = buildPrompt(perf, room);
+        const { system, user } = buildPrompt(perf, room, performers.length > 1 ? prev : null);
         out = parseJSON(await claude(system, user));
         totalCalls++;
       } catch (e) {
