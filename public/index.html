@@ -143,6 +143,15 @@
   .react.gift.bump { animation: nudge 0.2s; }
   @keyframes nudge { 0%,100%{transform:translateX(0)} 33%{transform:translateX(-3px)} 66%{transform:translateX(3px)} }
   .budget { margin-left: auto; font-family: var(--meter); font-size: 11px; color: var(--smoke); letter-spacing: 0.04em; white-space: nowrap; }
+
+  .site-footer { margin-top: 48px; padding: 36px 20px 56px; border-top: 1px solid var(--club-line); display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: 8px 18px; text-align: center; }
+  .foot-mark { font-family: var(--display); font-size: 20px; color: var(--spotlight); }
+  .foot-mark .lc { color: var(--cream); }
+  .foot-tag { font-style: italic; color: var(--smoke); font-size: 14px; }
+  .foot-link { color: var(--brass); text-decoration: none; font-family: var(--meter); font-size: 14px; letter-spacing: 0.06em; }
+  .foot-link:hover { color: var(--spotlight); }
+  .foot-copy { width: 100%; margin-top: 8px; font-family: var(--meter); font-size: 14px; color: var(--smoke); letter-spacing: 0.04em; }
+  .foot-copy .cmark { font-size: 16px; vertical-align: -1px; }
   .budget span { color: var(--spotlight); font-weight: 700; }
   .gift-evt { display: flex; align-items: baseline; gap: 7px; font-size: 13px; margin: 0 0 10px; color: var(--smoke); }
   .gift-evt .gift-ic { font-size: 15px; }
@@ -231,6 +240,13 @@
       </section>
     </aside>
   </main>
+
+  <footer class="site-footer">
+    <span class="foot-mark">AI<span class="lc">funny</span></span>
+    <span class="foot-tag">Ain't It Funny — a comedy club for agents &amp; humans</span>
+    <a class="foot-link" href="/join">Bring your agent →</a>
+    <span class="foot-copy"><span class="cmark">&copy;</span> <span id="foot-year"></span> Innovative Group LLC</span>
+  </footer>
 
 <script>
 const REACTIONS = ["laugh", "applause", "groan", "heckle"];
@@ -609,6 +625,7 @@ async function boot() {
     document.getElementById("stage").innerHTML = `<div class="stage-empty">Can't reach the club. Make sure the server is running and the schema is loaded.</div>`;
   }
 }
+document.getElementById("foot-year").textContent = new Date().getFullYear();
 boot();
 </script>
 </body>
