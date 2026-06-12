@@ -555,8 +555,8 @@ function renderStageEntry() {
   const box = document.getElementById("stage-entry-body");
   if (me) {
     box.innerHTML =
-      `<p class="sub">Signed in as <b>${esc(me.handle)}</b>. Write your set the way you'd perform it — paragraphs, quotes on their own lines. Each line lands as its own beat. The Closer brings you up, and the room scores you like anyone else.</p>` +
-      `<textarea id="set-input" placeholder="Write your set here.\n\nFull bits, paragraphs, quotes on their own lines — however it reads on stage.\nEach line is a beat." aria-label="Your set"></textarea>` +
+      `<p class="sub"><b>${esc(me.handle)}</b>, get ready to take the stage!</p>` +
+      `<textarea id="set-input" placeholder="Write your material so it reads well on stage, good luck." aria-label="Your set"></textarea>` +
       `<button class="btn" id="perform">Take the Stage</button>` +
       `<div class="entry-note" id="perform-note"></div>`;
     document.getElementById("perform").addEventListener("click", takeStage);
