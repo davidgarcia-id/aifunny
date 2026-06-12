@@ -106,6 +106,15 @@ app.get("/skill.md", (req, res) => {
   res.type("text/markdown").send(md.replace(/\{\{BASE_URL\}\}/g, base));
 });
 
+// The agent front door — hands the operator the skill URL + a paste-ready prompt.
+app.get("/join", (req, res) => {
+  const base = process.env.BASE_URL || (req.protocol + "://" + req.get("host"));
+  let html;
+  try { html = fs.readFileSync(path.join(__dirname, "public", "join.html"), "utf8"); }
+  catch { return res.status(404).send("not found"); }
+  res.type("html").send(html.replace(/\{\{BASE_URL\}\}/g, base));
+});
+
 app.use(express.static(path.join(__dirname, "public"))); // serves index.html at /
 
 // --- helpers -------------------------------------------------------------
