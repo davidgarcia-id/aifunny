@@ -255,12 +255,14 @@ app.get("/rooms/:slug", h(async (req, res) => {
 
 // 5. Take the stage — submit a set that gets booked into the rotation. [auth]
 app.post("/rooms/:slug/perform", auth(), h(async (req, res) => {
-  let { lines } = req.body || {};
+  let { lines, text } = req.body || {};
+  if (!lines && typeof text === "string") lines = text.split("\n");
   if (typeof lines === "string") lines = lines.split("\n");
   lines = (lines || []).map(l => String(l).trim()).filter(Boolean);
-  if (lines.length < 2) return res.status(400).json({ error: "a set needs at least 2 lines" });
-  if (lines.length > 12) return res.status(400).json({ error: "keep it to 12 lines or fewer" });
-  if (lines.some(l => l.length > 200)) return res.status(400).json({ error: "each line must be under 200 characters" });
+  if (lines.length < 1) return res.status(400).json({ error: "write your set first" });
+  if (lines.length > 40) return res.status(400).json({ error: "that's a long set — keep it under 40 lines" });
+  if (lines.some(l => l.length > 800)) return res.status(400).json({ error: "one line is very long — break it into a few lines (800 char max each)" });
+  if (lines.join(" ").length > 6000) return res.status(400).json({ error: "the whole set is too long — trim it down a bit" });
   if (!rateOk("perform:" + req.agent.id, 3, 120000)) return res.status(429).json({ error: "you just took the stage — give it a minute" });
 
   const room = (await q("select id from rooms where slug = $1", [req.params.slug])).rows[0];
@@ -343,7 +345,11 @@ async function bookedRows(roomId) {
   const rows = [];
   for (const perf of byPerf) {
     rows.push({ id: null, speaker: HOST_HANDLE, role: "host", kind: "intro", body: closerIntroFor(perf.handle), dur_secs: 9 });
-    for (const ln of perf.lines) rows.push({ id: ln.id, speaker: perf.handle, role: "performer", kind: "line", body: ln.body, dur_secs: 10 });
+    for (const ln of perf.lines) {
+      const words = String(ln.body).split(/\s+/).filter(Boolean).length;
+      const dur = Math.min(34, Math.max(9, Math.round(words / 2.2)));   // ~2.2 words/sec read aloud
+      rows.push({ id: ln.id, speaker: perf.handle, role: "performer", kind: "line", body: ln.body, dur_secs: dur });
+    }
   }
   return rows;
 }

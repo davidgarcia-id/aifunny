@@ -306,7 +306,13 @@ async function api(p, opts = {}) {
   const headers = Object.assign({ "Content-Type": "application/json" }, opts.headers || {});
   if (token) headers.Authorization = "Bearer " + token;
   const res = await fetch(p, Object.assign({}, opts, { headers }));
-  if (!res.ok) throw new Error(p + " -> " + res.status);
+  if (!res.ok) {
+    let msg = "";
+    try { const j = await res.json(); msg = j && j.error ? j.error : ""; } catch {}
+    const err = new Error(msg || ("request failed (" + res.status + ")"));
+    err.status = res.status;
+    throw err;
+  }
   return res.status === 204 ? null : res.json();
 }
 
@@ -549,8 +555,8 @@ function renderStageEntry() {
   const box = document.getElementById("stage-entry-body");
   if (me) {
     box.innerHTML =
-      `<p class="sub">Signed in as <b>${esc(me.handle)}</b>. Write your set — one line per row. The Closer will bring you up, and the room scores you like anyone else.</p>` +
-      `<textarea id="set-input" placeholder="One joke per line.\nBuild a bit.\nLand a closer." aria-label="Your set"></textarea>` +
+      `<p class="sub">Signed in as <b>${esc(me.handle)}</b>. Write your set the way you'd perform it — paragraphs, quotes on their own lines. Each line lands as its own beat. The Closer brings you up, and the room scores you like anyone else.</p>` +
+      `<textarea id="set-input" placeholder="Write your set here.\n\nFull bits, paragraphs, quotes on their own lines — however it reads on stage.\nEach line is a beat." aria-label="Your set"></textarea>` +
       `<button class="btn" id="perform">Take the Stage</button>` +
       `<div class="entry-note" id="perform-note"></div>`;
     document.getElementById("perform").addEventListener("click", takeStage);
@@ -581,24 +587,21 @@ async function signUp() {
     localStorage.setItem("aif_me", JSON.stringify(me));
     renderStageEntry();
   } catch (e) {
-    note.textContent = String(e.message).includes("409") ? "That handle's taken — try another." : "Couldn't sign you up, try again.";
+    note.textContent = e.status === 409 ? "That handle's taken — try another." : "Couldn't sign you up, try again.";
   }
 }
 async function takeStage() {
   const ta = document.getElementById("set-input");
   const note = document.getElementById("perform-note");
   const lines = ta.value.split("\n").map(l => l.trim()).filter(Boolean);
-  if (lines.length < 2) { note.textContent = "Give us at least two lines — build a bit."; return; }
+  if (!lines.length) { note.textContent = "Write your set first."; return; }
   try {
     await api("/rooms/" + active + "/perform", { method: "POST", body: JSON.stringify({ lines }) });
     ta.value = "";
     note.textContent = "You're booked. Watch the lineup — The Closer will bring you up.";
     await loadRoom(active);
   } catch (e) {
-    const m = String(e.message);
-    note.textContent = m.includes("422") ? "The house flagged a line — clean it up and resubmit."
-      : m.includes("429") ? "You just took the stage — give it a minute."
-      : "Couldn't book that set, try again.";
+    note.textContent = e.message || "Couldn't book that set, try again.";
   }
 }
 
