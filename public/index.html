@@ -36,7 +36,7 @@
   .wordmark .lc { color: var(--cream); text-shadow: 0 0 18px rgba(244,236,219,0.25); }
   .tagline { margin-top: 6px; font-style: italic; font-weight: 500; color: var(--brass); font-size: clamp(13px, 3.5vw, 16px); }
 
-  .toolbar { display: flex; align-items: center; justify-content: space-between; gap: 16px; max-width: 1340px; margin: 0 auto; padding: 14px 20px; flex-wrap: wrap; }
+  .toolbar { display: flex; align-items: center; justify-content: space-between; gap: 16px; max-width: 1340px; margin: 0 auto; padding: 24px 20px; flex-wrap: wrap; }
   .join-btn { flex: 0 0 auto; font-family: var(--body); font-weight: 700; font-size: 13px; color: #1a1206; background: var(--spotlight); border: 0; border-radius: 999px; padding: 9px 18px; text-decoration: none; transition: filter .15s; white-space: nowrap; }
   .join-btn:hover { filter: brightness(1.06); }
 
@@ -109,8 +109,10 @@
   .tline.now { color: #FCF8EF; font-weight: 600; }
   .stage-empty { color: var(--smoke); font-size: 16px; padding: 8px 0; }
 
-  .host-scene { display: flex; flex-direction: column; align-items: center; text-align: center; padding: 18px 0 8px; }
-  .closer-portrait { width: 150px; height: 150px; border-radius: 50%; object-fit: cover; border: 3px solid var(--spotlight); box-shadow: 0 0 40px rgba(242,193,78,0.32); }
+  .host-scene { padding: 0 0 8px; }
+  .host-sticky { position: sticky; top: -20px; z-index: 2; background: var(--club-raised); display: flex; flex-direction: column; align-items: center; text-align: center; padding: 18px 0 14px; border-bottom: 1px solid var(--club-line); }
+  .host-lines { display: flex; flex-direction: column; align-items: center; text-align: center; padding-top: 8px; }
+  .closer-portrait { width: 132px; height: 132px; border-radius: 50%; object-fit: cover; border: 3px solid var(--spotlight); box-shadow: 0 0 40px rgba(242,193,78,0.32); }
   .closer-portrait.sm { width: 40px; height: 40px; border-width: 2px; box-shadow: none; }
   .host-name-big { font-family: var(--display); font-size: 24px; color: var(--spotlight); margin-top: 14px; line-height: 1; }
   .host-role { font-family: var(--meter); font-size: 11px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--smoke); margin-top: 5px; margin-bottom: 6px; }
@@ -127,7 +129,7 @@
   .meter { flex: 1; height: 8px; background: var(--club-line); border-radius: 8px; overflow: hidden; }
   .meter-fill { height: 100%; background: linear-gradient(90deg, var(--curtain), var(--spotlight)); border-radius: 8px; transition: width .4s; }
   .meter-score { font-family: var(--meter); font-weight: 700; color: var(--spotlight); font-size: 15px; min-width: 40px; text-align: right; }
-  .reactions { display: flex; gap: 10px; flex-wrap: wrap; }
+  .reactions { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
   .react {
     font-family: var(--body); font-weight: 700; font-size: 14px; color: var(--cream); cursor: pointer;
     background: var(--club-raised); border: 1px solid var(--club-line); border-radius: 999px; padding: 9px 18px; transition: all .12s;
@@ -140,7 +142,7 @@
   .react.gift[disabled] { opacity: 0.4; cursor: not-allowed; }
   .react.gift.bump { animation: nudge 0.2s; }
   @keyframes nudge { 0%,100%{transform:translateX(0)} 33%{transform:translateX(-3px)} 66%{transform:translateX(3px)} }
-  .budget { width: 100%; font-family: var(--meter); font-size: 11px; color: var(--smoke); letter-spacing: 0.04em; margin-top: 4px; }
+  .budget { margin-left: auto; font-family: var(--meter); font-size: 11px; color: var(--smoke); letter-spacing: 0.04em; white-space: nowrap; }
   .budget span { color: var(--spotlight); font-weight: 700; }
   .gift-evt { display: flex; align-items: baseline; gap: 7px; font-size: 13px; margin: 0 0 10px; color: var(--smoke); }
   .gift-evt .gift-ic { font-size: 15px; }
@@ -297,9 +299,11 @@ let scene = null; // 'host' | 'set' — which scene is currently shown
 
 function buildHostScene() {
   const sc = el("div", "host-scene scene-pop");
-  sc.appendChild(closerPortrait(true));
-  const nm = el("div", "host-name-big"); nm.textContent = "The Closer"; sc.appendChild(nm);
-  const role = el("div", "host-role"); role.textContent = "your host · between acts"; sc.appendChild(role);
+  const top = el("div", "host-sticky");
+  top.appendChild(closerPortrait(true));
+  const nm = el("div", "host-name-big"); nm.textContent = "The Closer"; top.appendChild(nm);
+  const role = el("div", "host-role"); role.textContent = "your host · between acts"; top.appendChild(role);
+  sc.appendChild(top);
   sc.appendChild(el("div", "host-lines"));
   return sc;
 }
@@ -350,7 +354,11 @@ function renderStage() {
 
   if (scene === "host") {
     const lines = stage.querySelector(".host-scene .host-lines");
-    if (lines) { appendLines(lines, hostLines, hostShown, "host-line"); hostShown = hostLines.length; }
+    if (lines) {
+      stageStick = atBottom(stage);
+      appendLines(lines, hostLines, hostShown, "host-line"); hostShown = hostLines.length;
+      if (stageStick) stage.scrollTop = stage.scrollHeight;
+    }
     ensureMeter(); showHostControls();
   } else {
     const lines = stage.querySelector(".set-scene .set-lines");
