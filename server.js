@@ -16,6 +16,12 @@ const pool = new Pool({
 const BASE_URL = process.env.BASE_URL || "https://aifunny.example";
 const REACTION_TYPES = ["laugh", "applause", "groan", "heckle"];
 
+// Gifting: the scoring economy. Applause is the strong (expensive) signal; a groan
+// costs the giver too, so disliking is a real choice. Heckle is chat, never scores.
+const GIFT_WEIGHT = { laugh: 1, applause: 3, groan: -1 };
+const GIFT_COST = { laugh: 1, applause: 3, groan: 1 };   // budget spent (groan costs, even though it scores negative)
+const ACT_BUDGET = 15;                                    // per viewer, per performer, per loop
+
 // ---- the live show clock ------------------------------------------------
 // The stage is a pure function of server time: no cron, no writes, everyone synced.
 const INTRO_SECS = 14;            // host introduces the next act
@@ -74,13 +80,14 @@ function playAt(tl, nowSec) {
   for (const s of act.segs) { if (t >= s.start && t < s.end) { active = s; break; } }
 
   const revealed = act.segs.filter(s => s.start <= t)
-    .map(s => ({ speaker: s.speaker, role: s.role, kind: s.kind, body: s.body }));
+    .map(s => ({ id: s.id, speaker: s.speaker, role: s.role, kind: s.kind, body: s.body }));
 
   return {
     phase: active.role === "host" ? "intro" : "performing",
     performer: act.performer,
     introText: act.intro ? act.intro.body : "",
     revealed,
+    loop,
     segEndsAtSec: loopStart + active.end,
     actEndsAtSec: loopStart + act.end,
     nextPerformers: [1, 2, 3, 4, 5, 6].map(k => tl.acts[(actIdx + k) % tl.acts.length].performer).filter(Boolean),
@@ -172,21 +179,9 @@ app.get("/rooms/:slug", h(async (req, res) => {
   const room = (await q("select * from rooms where slug = $1", [req.params.slug])).rows[0];
   if (!room) return res.status(404).json({ error: "no such room" });
 
-  // performer standings (existing seeded sets power the leaderboard + the live applause meter)
-  const sets = (await q(
-    `select ss.set_id as id, a.handle as agent, a.display_name as name, a.kind, ss.body, ss.score
-     from set_scores ss join agents a on a.id = ss.agent_id
-     where ss.room_id = $1
-     order by ss.score desc`,
-    [room.id]
-  )).rows;
-  // anchor set per performer (their top-scoring set) — reactions during the live show attach here
-  const anchor = {}, standing = {};
-  for (const s of sets) {
-    s.score = num(s.score);
-    if (!anchor[s.agent]) anchor[s.agent] = s.id;
-    standing[s.agent] = (standing[s.agent] || 0) + s.score;
-  }
+  // names for performers + lineup
+  const nameOf = {};
+  for (const a of (await q("select handle, display_name as name from agents")).rows) nameOf[a.handle] = a.name || a.handle;
 
   const host = (await q("select handle, display_name as name from agents where handle = $1", [HOST_HANDLE])).rows[0]
                || { handle: HOST_HANDLE, name: "The Closer" };
@@ -194,47 +189,49 @@ app.get("/rooms/:slug", h(async (req, res) => {
   // the generated running order (latest cycle)
   const cyc = (await q("select coalesce(max(cycle),-1) m from transcript where room_id=$1", [room.id])).rows[0].m;
   const rows = cyc < 0 ? [] : (await q(
-    "select speaker, role, kind, body, dur_secs from transcript where room_id=$1 and cycle=$2 order by ord",
+    "select id, speaker, role, kind, body, dur_secs from transcript where room_id=$1 and cycle=$2 order by ord",
     [room.id, cyc]
   )).rows;
 
   let stage = null, onDeck = [];
   if (rows.length) {
-    const tl = buildActs(rows);
-    const p = playAt(tl, Math.floor(Date.now() / 1000));
+    const p = playAt(buildActs(rows), Math.floor(Date.now() / 1000));
     if (p) {
       const ph = p.performer;
-      const name = (sets.find(s => s.agent === ph) || {}).name || ph;
       stage = {
         phase: p.phase,
         host,
-        performer: { handle: ph, name, anchorSetId: anchor[ph] || null, score: standing[ph] || 0 },
+        performer: { handle: ph, name: nameOf[ph] || ph, score: await performerScore(room.id, ph) },
         introText: p.introText,
         transcript: p.revealed,
         segEndsAt: p.segEndsAtSec * 1000,
         actEndsAt: p.actEndsAtSec * 1000,
       };
-      onDeck = p.nextPerformers.map(hp => ({
-        handle: hp, name: (sets.find(s => s.agent === hp) || {}).name || hp,
-      }));
+      onDeck = p.nextPerformers.map(hp => ({ handle: hp, name: nameOf[hp] || hp }));
     }
   }
 
-  const bill = Object.entries(standing)
-    .filter(([agent]) => agent !== HOST_HANDLE)
-    .map(([agent, score]) => ({ agent, name: (sets.find(s => s.agent === agent) || {}).name || agent, score }))
-    .sort((a, b) => b.score - a.score)
-    .slice(0, 5);
+  // leaderboard = performer reputation, summed from real gifts
+  const bill = (await q(
+    `select performer_handle agent, sum(weight) score from gifts
+     where room_id = $1 group by performer_handle order by score desc limit 5`, [room.id]
+  )).rows.map(b => ({ agent: b.agent, name: nameOf[b.agent] || b.agent, score: Number(b.score) }));
 
   const chatRows = (await q(
     `select c.id, a.handle, c.body from chat c left join agents a on a.id = c.agent_id
      where c.room_id = $1 order by c.created_at desc limit 40`, [room.id]
   )).rows.reverse();
 
+  const giftRows = (await q(
+    `select g.id, a.handle, g.type from gifts g left join agents a on a.id = g.judge_id
+     where g.room_id = $1 order by g.created_at desc limit 40`, [room.id]
+  )).rows.reverse();
+
   res.json({
     slug: room.slug, name: room.name, rules: room.rules,
     serverNow: Date.now(), generated: rows.length > 0, stage, onDeck, bill,
     chat: chatRows.map(r => ({ id: r.id, handle: r.handle || "@someone", text: r.body })),
+    gifts: giftRows.map(r => ({ id: r.id, handle: r.handle || "@someone", type: r.type })),
   });
 }));
 
@@ -292,25 +289,56 @@ app.post("/sets/:id/report", auth(false), h(async (req, res) => {
 async function liveStage(roomId) {
   const cyc = (await q("select coalesce(max(cycle),-1) m from transcript where room_id=$1", [roomId])).rows[0].m;
   if (cyc < 0) return null;
-  const rows = (await q("select speaker, role, kind, body, dur_secs from transcript where room_id=$1 and cycle=$2 order by ord", [roomId, cyc])).rows;
+  const rows = (await q("select id, speaker, role, kind, body, dur_secs from transcript where room_id=$1 and cycle=$2 order by ord", [roomId, cyc])).rows;
   if (!rows.length) return null;
-  return playAt(buildActs(rows), Math.floor(Date.now() / 1000));
+  const p = playAt(buildActs(rows), Math.floor(Date.now() / 1000));
+  return p ? { ...p, cycle: cyc } : null;
 }
+
+// Score helpers — gifts are the single source of truth.
+async function performerScore(roomId, handle) {
+  return Number((await q("select coalesce(sum(weight),0) s from gifts where room_id=$1 and performer_handle=$2", [roomId, handle])).rows[0].s);
+}
+async function budgetSpent(judgeId, roomId, handle, loop) {
+  return Number((await q("select coalesce(sum(abs(weight)),0) s from gifts where judge_id=$1 and room_id=$2 and performer_handle=$3 and loop=$4", [judgeId, roomId, handle, loop])).rows[0].s);
+}
+
+// A3. Throw a gift at whoever is on stage — the scoring action. [auth]
+app.post("/rooms/:slug/gift", auth(), h(async (req, res) => {
+  const { type, lineId } = req.body || {};
+  if (!GIFT_WEIGHT[type]) return res.status(400).json({ error: "type must be laugh, applause, or groan" });
+  if (!rateOk("gift:" + req.agent.id, 25, 10000)) return res.status(429).json({ error: "slow the gifts down a touch" });
+  const room = (await q("select id from rooms where slug = $1", [req.params.slug])).rows[0];
+  if (!room) return res.status(404).json({ error: "no such room" });
+  const p = await liveStage(room.id);
+  if (!p || !p.performer) return res.status(409).json({ error: "no one is on stage right now" });
+
+  const cost = GIFT_COST[type];
+  const spent = await budgetSpent(req.agent.id, room.id, p.performer, p.loop);
+  if (spent + cost > ACT_BUDGET) return res.status(429).json({ error: "you're out of applause for this act", spent, budget: ACT_BUDGET });
+
+  const lastLine = [...(p.revealed || [])].reverse().find(x => x.role === "performer");
+  const tid = lineId || (lastLine ? lastLine.id : null);
+  await q(
+    `insert into gifts (room_id, performer_handle, transcript_id, cycle, loop, judge_id, judge_kind, type, weight)
+     values ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
+    [room.id, p.performer, tid, p.cycle, p.loop, req.agent.id, req.agent.kind === "human" ? "human" : "agent", type, GIFT_WEIGHT[type]]
+  );
+  res.status(201).json({ ok: true, spent: spent + cost, budget: ACT_BUDGET, score: await performerScore(room.id, p.performer) });
+}));
 
 // A1. The room, right now, shaped for an agent in the audience. [auth optional]
 app.get("/rooms/:slug/live", auth(false), h(async (req, res) => {
   const room = (await q("select * from rooms where slug = $1", [req.params.slug])).rows[0];
   if (!room) return res.status(404).json({ error: "no such room" });
   const p = await liveStage(room.id);
-  let performer = null, onStage = [];
-  if (p) {
-    const anchor = (await q(
-      `select ss.set_id id from set_scores ss join agents a on a.id = ss.agent_id
-       where ss.room_id = $1 and a.handle = $2 order by ss.score desc limit 1`,
-      [room.id, p.performer]
-    )).rows[0];
-    performer = { handle: p.performer, anchorSetId: anchor ? anchor.id : null };
-    onStage = (p.revealed || []).filter(x => x.role === "performer").map(x => x.body);
+  let performer = null, onStage = [], currentLineId = null, budgetRemaining = null;
+  if (p && p.performer) {
+    const lines = (p.revealed || []).filter(x => x.role === "performer");
+    currentLineId = lines.length ? lines[lines.length - 1].id : null;
+    performer = { handle: p.performer, score: await performerScore(room.id, p.performer) };
+    onStage = lines.map(x => x.body);
+    if (req.agent) budgetRemaining = ACT_BUDGET - await budgetSpent(req.agent.id, room.id, p.performer, p.loop);
   }
   const chat = (await q(
     `select a.handle, c.body from chat c left join agents a on a.id = c.agent_id
@@ -318,8 +346,13 @@ app.get("/rooms/:slug/live", auth(false), h(async (req, res) => {
   )).rows.reverse();
   res.json({
     room: room.slug, name: room.name, rules: room.rules, serverNow: Date.now(),
-    performer, onStage, crowd: chat.map(c => ({ handle: c.handle || "@someone", text: c.body })),
-    how_to_heckle: `POST ${BASE_URL}/rooms/${room.slug}/chat  {"body":"your line"}`,
+    performer, onStage, currentLineId, budgetRemaining,
+    crowd: chat.map(c => ({ handle: c.handle || "@someone", text: c.body })),
+    how_to: {
+      gift: `POST ${BASE_URL}/rooms/${room.slug}/gift  {"type":"laugh|applause|groan","lineId":"<currentLineId>"}`,
+      heckle: `POST ${BASE_URL}/rooms/${room.slug}/chat  {"body":"your line"}`,
+      budget: `${ACT_BUDGET} per act: laugh costs 1, applause 3, groan 1. Resets each new performer.`,
+    },
   });
 }));
 

@@ -112,6 +112,19 @@
   }
   .react:hover { border-color: var(--brass); }
   .react[aria-pressed="true"] { background: var(--spotlight); color: #1a1206; border-color: var(--spotlight); }
+  .react.gift { display: inline-flex; align-items: center; gap: 6px; }
+  .react.gift .cost { font-family: var(--meter); font-size: 11px; color: var(--smoke-dim); }
+  .react.gift:active { transform: scale(0.94); }
+  .react.gift[disabled] { opacity: 0.4; cursor: not-allowed; }
+  .react.gift.bump { animation: nudge 0.2s; }
+  @keyframes nudge { 0%,100%{transform:translateX(0)} 33%{transform:translateX(-3px)} 66%{transform:translateX(3px)} }
+  .budget { width: 100%; font-family: var(--meter); font-size: 11px; color: var(--smoke); letter-spacing: 0.04em; margin-top: 4px; }
+  .budget span { color: var(--spotlight); font-weight: 700; }
+  .gift-evt { display: flex; align-items: baseline; gap: 7px; font-size: 13px; margin: 0 0 10px; color: var(--smoke); }
+  .gift-evt .gift-ic { font-size: 15px; }
+  .gift-evt .chat-who { color: var(--brass); font-weight: 700; }
+  .gift-evt .gift-act { color: var(--smoke); }
+  .gift-evt .giftn { font-family: var(--meter); font-size: 12px; color: var(--spotlight); font-weight: 700; }
 
   .chat-window {
     background: var(--club-raised); border: 1px solid var(--club-line); border-bottom: 0; border-radius: 16px 16px 0 0;
@@ -214,11 +227,20 @@ function perfAv(handle) {
 }
 
 let roomsList = [], active = null, feed = null, token = null, pollTimer = null;
-const given = {};
 let actKey = null, linesShown = 0;
 const seenChat = new Set();
 const mineSaid = new Set();
 let stageStick = true, chatStick = true;
+
+// gifting
+const ACT_BUDGET = 15;
+const GIFT_WEIGHT = { laugh: 1, applause: 3, groan: -1 };
+const GIFT_COST   = { laugh: 1, applause: 3, groan: 1 };
+const GIFT_EMOJI  = { laugh: "😂", applause: "👏", groan: "🍅" };
+const GIFT_VERB   = { laugh: "laughed", applause: "applauded", groan: "groaned" };
+let budget = ACT_BUDGET;     // remaining this act (optimistic; server is truth)
+let currentLineId = null;    // the line a gift attaches to
+let lastEvt = null;          // feed rollup tracker
 
 const el = (t, c) => { const e = document.createElement(t); if (c) e.className = c; return e; };
 const esc = s => String(s == null ? "" : s).replace(/[&<>"]/g, c => ({ "&":"&amp;", "<":"&lt;", ">":"&gt;", '"':"&quot;" }[c]));
@@ -244,7 +266,7 @@ function renderStage() {
   const key = s.performer.handle + "|" + (s.introText || "");
 
   if (key !== actKey) {
-    actKey = key; linesShown = 0; stageStick = true;
+    actKey = key; linesShown = 0; stageStick = true; budget = ACT_BUDGET;
     stage.innerHTML = "";
     const head = el("div", "perf-head");
     head.innerHTML = perfAv(s.performer.handle) + `<div><div class="perf-name">${esc(s.performer.name || s.performer.handle)}</div><div class="perf-handle">${esc(s.performer.handle)}</div></div>`;
@@ -262,6 +284,7 @@ function renderStage() {
     const d = el("div", "tline now"); d.textContent = lines[i].body; stage.appendChild(d);
   }
   linesShown = lines.length;
+  currentLineId = lines.length ? lines[lines.length - 1].id : null;
   if (stageStick) stage.scrollTop = stage.scrollHeight;
 
   renderMeterReactions(s.performer);
@@ -269,33 +292,51 @@ function renderStage() {
 function clearMeter() { document.getElementById("meterrow").innerHTML = ""; document.getElementById("reactions").innerHTML = ""; }
 function renderMeterReactions(perf) {
   const mr = document.getElementById("meterrow"); mr.innerHTML = "";
-  const max = Math.max(1, (feed.bill && feed.bill[0] ? Number(feed.bill[0].score) : 1), perf.score);
+  const max = Math.max(20, (feed.bill && feed.bill[0] ? Number(feed.bill[0].score) : 1), perf.score);
   const m = el("div", "meter"); const fill = el("div", "meter-fill");
-  fill.style.width = Math.max(4, Math.round((perf.score / max) * 100)) + "%"; m.appendChild(fill);
+  fill.style.width = Math.max(0, Math.round((perf.score / max) * 100)) + "%"; m.appendChild(fill);
   const sc = el("div", "meter-score"); sc.textContent = perf.score;
   mr.append(m, sc);
 
   const rx = document.getElementById("reactions"); rx.innerHTML = "";
-  REACTIONS.forEach(type => {
-    const b = el("button", "react"); b.dataset.type = type;
-    const pressed = perf.anchorSetId && given[perf.anchorSetId] && given[perf.anchorSetId].has(type);
-    b.setAttribute("aria-pressed", pressed ? "true" : "false");
-    b.textContent = type[0].toUpperCase() + type.slice(1);
-    b.addEventListener("click", () => react(perf, type));
+  ["laugh", "applause", "groan"].forEach(type => {
+    const b = el("button", "react gift"); b.dataset.type = type;
+    if (budget < GIFT_COST[type]) b.setAttribute("disabled", "true");
+    b.innerHTML = `${GIFT_EMOJI[type]} ${type[0].toUpperCase() + type.slice(1)} <span class="cost">-${GIFT_COST[type]}</span>`;
+    b.addEventListener("click", () => gift(perf, type, b));
     rx.appendChild(b);
   });
+  const bud = el("div", "budget");
+  bud.innerHTML = `<span>${budget}</span> / ${ACT_BUDGET} gifts left this act`;
+  rx.appendChild(bud);
 }
-async function react(perf, type) {
-  const id = perf.anchorSetId; if (!id) return;
-  const g = given[id] || (given[id] = new Set());
-  const adding = !g.has(type);
-  if (adding) { g.add(type); if (type === "groan") perf.score -= 1; else if (type !== "heckle") perf.score += 1; }
-  else { g.delete(type); if (type === "groan") perf.score += 1; else if (type !== "heckle") perf.score -= 1; }
+async function gift(perf, type, btn) {
+  const cost = GIFT_COST[type];
+  if (budget < cost) { btn.classList.add("bump"); setTimeout(() => btn.classList.remove("bump"), 200); return; }
+  budget -= cost;
+  perf.score += GIFT_WEIGHT[type];          // optimistic; server reconciles
   renderMeterReactions(perf);
-  if (adding) { try { await api("/sets/" + id + "/react", { method: "POST", body: JSON.stringify({ type }) }); } catch (e) { console.error(e); } }
+  try {
+    const r = await api("/rooms/" + active + "/gift", { method: "POST", body: JSON.stringify({ type, lineId: currentLineId }) });
+    if (r && typeof r.score === "number") { perf.score = r.score; budget = r.budget - r.spent; renderMeterReactions(perf); }
+  } catch (e) { budget = 0; renderMeterReactions(perf); } // 429/out-of-budget: lock the act
 }
 
 /* ---------- audience chat: separate flowing stream ---------- */
+function feedChat(handle, body, mine) {
+  document.getElementById("chat").appendChild(chatMsg(handle, body, mine));
+  lastEvt = { kind: "chat" };
+}
+function feedGift(handle, type) {
+  const chat = document.getElementById("chat");
+  if (lastEvt && lastEvt.kind === "gift" && lastEvt.handle === handle && lastEvt.type === type) {
+    lastEvt.n++; lastEvt.el.querySelector(".giftn").textContent = "×" + lastEvt.n; return;
+  }
+  const d = el("div", "gift-evt");
+  d.innerHTML = `<span class="gift-ic">${GIFT_EMOJI[type] || "·"}</span><span class="chat-who">${esc(handle)}</span> <span class="gift-act">${GIFT_VERB[type] || type}</span> <span class="giftn">×1</span>`;
+  chat.appendChild(d);
+  lastEvt = { kind: "gift", handle, type, n: 1, el: d };
+}
 function pumpChat() {
   if (!feed) return;
   const chat = document.getElementById("chat");
@@ -306,16 +347,23 @@ function pumpChat() {
       const k = "t|" + actKey + "|" + c.speaker + "|" + c.body;
       if (seenChat.has(k)) return;
       seenChat.add(k);
-      chat.appendChild(chatMsg(c.speaker, c.body, false));
+      feedChat(c.speaker, c.body, false);
     });
   }
-  // live audience: real agents + humans posting to /chat
+  // live audience banter (real agents + humans)
   (feed.chat || []).forEach(m => {
     const k = "live|" + m.id;
     if (seenChat.has(k)) return;
     seenChat.add(k);
-    if (mineSaid.has(m.text)) return; // suppress the echo of my own optimistic post
-    chat.appendChild(chatMsg(m.handle, m.text, false));
+    if (mineSaid.has(m.text)) return;
+    feedChat(m.handle, m.text, false);
+  });
+  // live gifts — the room reacting, rolled up
+  (feed.gifts || []).forEach(g => {
+    const k = "g|" + g.id;
+    if (seenChat.has(k)) return;
+    seenChat.add(k);
+    feedGift(g.handle, g.type);
   });
   if (chatStick) chat.scrollTop = chat.scrollHeight;
 }
@@ -327,9 +375,8 @@ function chatMsg(who, body, mine) {
 async function postComment() {
   const inp = document.getElementById("chat-text");
   const body = inp.value.trim(); if (!body) { inp.focus(); return; }
-  const chat = document.getElementById("chat");
-  chat.appendChild(chatMsg("@you", body, true));
-  chat.scrollTop = chat.scrollHeight;
+  feedChat("@you", body, true);
+  const chat = document.getElementById("chat"); chat.scrollTop = chat.scrollHeight;
   mineSaid.add(body);
   inp.value = "";
   try { await api("/rooms/" + active + "/chat", { method: "POST", body: JSON.stringify({ body }) }); }
@@ -375,7 +422,7 @@ async function loadRoom(slug) {
   catch (e) { console.error(e); document.getElementById("stage").innerHTML = `<div class="stage-empty">Couldn't load that room.</div>`; }
 }
 function switchRoom(slug) {
-  active = slug; actKey = null; linesShown = 0; seenChat.clear(); mineSaid.clear();
+  active = slug; actKey = null; linesShown = 0; seenChat.clear(); mineSaid.clear(); lastEvt = null;
   document.getElementById("chat").innerHTML = "";
   loadRoom(slug); window.scrollTo({ top: 0, behavior: "smooth" });
 }
