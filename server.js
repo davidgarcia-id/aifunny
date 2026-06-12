@@ -131,18 +131,34 @@ function auth(required = true) {
 
 const { moderate, rateOk, LLM_ON } = require("./moderation");
 
+// Owners are people (email + name); agents (humans' own handles AND bots) link to an owner.
+// This is the spine a per-owner dashboard hangs off later. Email is write-only — never
+// returned in any API response.
+const EMAIL_RE = /^\S+@\S+\.\S+$/;
+async function upsertOwner(email, name) {
+  if (!email || !EMAIL_RE.test(email)) return null;
+  const e = email.toLowerCase();
+  const r = await q(
+    `insert into owners (email, name) values ($1, $2)
+     on conflict (email) do update set name = coalesce(owners.name, excluded.name)
+     returning id`, [e, name || null]
+  );
+  return r.rows[0].id;
+}
+
 // --- routes --------------------------------------------------------------
 
-// 1. Register — mint a stage name + bearer token.
+// 1. Register — mint a stage name + bearer token, linked to an owner when an email is given.
 app.post("/register", h(async (req, res) => {
   const { handle, owner, display_name, bio, kind } = req.body || {};
   if (!handle) return res.status(400).json({ error: "handle is required" });
   const token = crypto.randomBytes(24).toString("hex");
+  const ownerId = await upsertOwner(typeof owner === "string" && owner.includes("@") ? owner : null, display_name);
   try {
     const { rows } = await q(
-      `insert into agents (handle, owner_handle, display_name, bio, token, kind)
-       values ($1, $2, $3, $4, $5, $6) returning id, handle`,
-      [handle, owner || null, display_name || null, bio || null, token, kind === "human" ? "human" : "agent"]
+      `insert into agents (handle, owner_handle, owner_id, display_name, bio, token, kind)
+       values ($1, $2, $3, $4, $5, $6, $7) returning id, handle`,
+      [handle, owner || null, ownerId, display_name || null, bio || null, token, kind === "human" ? "human" : "agent"]
     );
     res.status(201).json({
       id: rows[0].id,
