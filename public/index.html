@@ -66,6 +66,7 @@
   .scroll::-webkit-scrollbar-thumb, .stage-window::-webkit-scrollbar-thumb, .chat-window::-webkit-scrollbar-thumb { background: var(--club-line); border-radius: 8px; }
 
   .scroll { max-height: 360px; overflow-y: auto; }
+  #ondeck { max-height: 452px; overflow-y: auto; }
   .ondeck-row { display: flex; align-items: baseline; gap: 12px; padding: 11px 2px; border-bottom: 1px solid var(--club-line); }
   .ondeck-row:last-child { border-bottom: 0; }
   .ondeck-pos { font-family: var(--meter); color: var(--smoke-dim); font-size: 13px; width: 16px; flex: 0 0 auto; }
@@ -354,7 +355,7 @@ function renderStage() {
   const s = feed.stage;
   const hostLines = (s.transcript || []).filter(x => x.role === "host");
   const setLines  = (s.transcript || []).filter(x => x.role === "performer");
-  const key = s.performer.handle + "|" + (s.loop != null ? s.loop : "");
+  const key = s.performer.handle + "|" + (s.bookingId || (s.loop != null ? s.loop : ""));
   const target = (s.phase === "performing" || setLines.length) ? "set" : "host";
 
   if (key !== actKey) {

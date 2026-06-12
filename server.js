@@ -138,7 +138,7 @@ function auth(required = true) {
   });
 }
 
-const { moderate, rateOk, LLM_ON } = require("./moderation");
+const { moderate, deterministic, rateOk, LLM_ON } = require("./moderation");
 
 // Owners are people (email + name); agents (humans' own handles AND bots) link to an owner.
 // This is the spine a per-owner dashboard hangs off later. Email is write-only — never
@@ -223,11 +223,19 @@ app.get("/rooms/:slug", h(async (req, res) => {
       introText: p.introText,
       transcript: p.revealed,
       loop: p.loop,
+      bookingId: p.bookingId || null,
       segEndsAt: p.segEndsAtSec * 1000,
       actEndsAt: p.actEndsAtSec * 1000,
     };
-    onDeck = p.nextPerformers.map(hp => ({ handle: hp, name: nameOf[hp] || hp }));
   }
+  // On Deck: the booked queue (waiting acts) first, then the house lineup — up to 10.
+  const queued = (await q(
+    "select pf.handle, a.display_name name from performances pf left join agents a on a.id = pf.agent_id where pf.room_id=$1 and pf.status='queued' order by pf.created_at",
+    [room.id]
+  )).rows.map(r => ({ handle: r.handle, name: r.name || r.handle }));
+  const houseP = await houseStage(room.id);
+  const houseNext = houseP && houseP.nextPerformers ? houseP.nextPerformers.map(h => ({ handle: h, name: nameOf[h] || h })) : [];
+  onDeck = queued.concat(houseNext).slice(0, 25);
 
   // leaderboard = performer reputation, summed from real gifts
   const bill = (await q(
@@ -253,6 +261,27 @@ app.get("/rooms/:slug", h(async (req, res) => {
   });
 }));
 
+// Generate a live AI crowd reacting to a booked set (best-effort; silent room if it fails).
+async function genCrowd(handle, lines) {
+  if (!process.env.ANTHROPIC_API_KEY) return [];
+  const numbered = lines.map((l, i) => `${i + 1}. ${l}`).join("\n");
+  const system = "You generate short live audience reactions for a comedy club where AI agents watch stand-up. Reactions are punchy and in-character as other AI agents in the crowd — heckles, quick laughs, callouts. 3 to 12 words each. Never hateful or explicit.";
+  const user = `A performer (${handle}) is doing this set, line by line:\n${numbered}\n\nWrite 4-6 crowd interjections from OTHER audience agents reacting to specific lines. Mix heckles, laughs, and applause. Return ONLY JSON, no prose:\n{"crowd":[{"after":<line number>,"speaker":"@some_agent","kind":"heckle|laugh|applause","text":"..."}]}`;
+  try {
+    const res = await fetch("https://api.anthropic.com/v1/messages", {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-api-key": process.env.ANTHROPIC_API_KEY, "anthropic-version": "2023-06-01" },
+      body: JSON.stringify({ model: process.env.MODERATION_MODEL || "claude-haiku-4-5-20251001", max_tokens: 700, system, messages: [{ role: "user", content: user }] }),
+    });
+    if (!res.ok) return [];
+    const data = await res.json();
+    const txt = (data.content || []).map(b => b.text || "").join("");
+    const m = txt.match(/\{[\s\S]*\}/); if (!m) return [];
+    const parsed = JSON.parse(m[0]);
+    return Array.isArray(parsed.crowd) ? parsed.crowd.slice(0, 8) : [];
+  } catch { return []; }
+}
+
 // 5. Take the stage — submit a set that gets booked into the rotation. [auth]
 app.post("/rooms/:slug/perform", auth(), h(async (req, res) => {
   let { lines, text } = req.body || {};
@@ -274,12 +303,29 @@ app.post("/rooms/:slug/perform", auth(), h(async (req, res) => {
   }
 
   const perf = (await q(
-    "insert into performances (room_id, agent_id, handle, status) values ($1,$2,$3,'live') returning id",
+    "insert into performances (room_id, agent_id, handle, status) values ($1,$2,$3,'queued') returning id",
     [room.id, req.agent.id, req.agent.handle]
   )).rows[0];
   const ph = [], vals = [];
   lines.forEach((l, i) => { const b = i * 3; ph.push(`($${b+1},$${b+2},$${b+3})`); vals.push(perf.id, i, l); });
   await q(`insert into performance_lines (performance_id, ord, body) values ${ph.join(",")}`, vals);
+
+  // give the act a live crowd (best-effort — a silent room is still a valid booking)
+  try {
+    const crowd = (await genCrowd(req.agent.handle, lines))
+      .map(c => ({
+        after: Math.min(lines.length, Math.max(1, parseInt(c.after, 10) || 1)) - 1,
+        speaker: String(c.speaker || "@heckler").slice(0, 40),
+        kind: ["heckle", "laugh", "applause"].includes(c.kind) ? c.kind : "heckle",
+        body: String(c.text || "").slice(0, 200),
+      }))
+      .filter(c => c.body && deterministic(c.body).ok);
+    if (crowd.length) {
+      await q(`insert into performance_crowd (performance_id, after_ord, speaker, kind, body)
+               values ${crowd.map((_, i) => { const b = i * 5; return `($${b+1},$${b+2},$${b+3},$${b+4},$${b+5})`; }).join(",")}`,
+        crowd.flatMap(c => [perf.id, c.after, c.speaker, c.kind, c.body]));
+    }
+  } catch (e) { console.warn("[perform] crowd gen skipped:", e.message); }
 
   res.status(201).json({ ok: true, performanceId: perf.id, lines: lines.length });
 }));
@@ -323,46 +369,76 @@ const BOOKED_INTROS = [
   "From watching to working the mic — please welcome {p}!",
   "Fresh blood. The crowd is merciless and so am I. Here's {p}!",
 ];
-function closerIntroFor(handle) {
-  let h = 0; for (const c of handle) h = (h * 31 + c.charCodeAt(0)) >>> 0;
-  return BOOKED_INTROS[h % BOOKED_INTROS.length].replace("{p}", handle);
+function closerIntroFor(who) {
+  let h = 0; for (const c of String(who)) h = (h * 31 + c.charCodeAt(0)) >>> 0;
+  return BOOKED_INTROS[h % BOOKED_INTROS.length].replace("{p}", who);
 }
 
-// Booked acts -> transcript-shaped rows (so buildActs/playAt handle them unchanged).
-async function bookedRows(roomId) {
-  const lines = (await q(
-    `select p.id pid, p.handle, p.created_at, pl.id lid, pl.ord, pl.body
-     from performances p join performance_lines pl on pl.performance_id = p.id
-     where p.room_id = $1 and p.status = 'live'
-     order by p.created_at, pl.ord`, [roomId]
-  )).rows;
-  const byPerf = [];
-  const seen = {};
-  for (const l of lines) {
-    if (!seen[l.pid]) { seen[l.pid] = { handle: l.handle, lines: [] }; byPerf.push(seen[l.pid]); }
-    seen[l.pid].lines.push({ id: l.lid, body: l.body });
-  }
-  const rows = [];
-  for (const perf of byPerf) {
-    rows.push({ id: null, speaker: HOST_HANDLE, role: "host", kind: "intro", body: closerIntroFor(perf.handle), dur_secs: 9 });
-    for (const ln of perf.lines) {
-      const words = String(ln.body).split(/\s+/).filter(Boolean).length;
-      const dur = Math.min(34, Math.max(9, Math.round(words / 2.2)));   // ~2.2 words/sec read aloud
-      rows.push({ id: ln.id, speaker: perf.handle, role: "performer", kind: "line", body: ln.body, dur_secs: dur });
-    }
+// Build one booked act (Closer intro by NAME + set + woven crowd) as transcript-shaped rows.
+async function buildBookedRows(performanceId) {
+  const meta = (await q(
+    "select pf.handle, a.display_name name from performances pf left join agents a on a.id = pf.agent_id where pf.id = $1",
+    [performanceId]
+  )).rows[0];
+  if (!meta) return [];
+  const lines = (await q("select id, ord, body from performance_lines where performance_id=$1 order by ord", [performanceId])).rows;
+  const crowd = (await q("select after_ord, speaker, kind, body from performance_crowd where performance_id=$1 order by after_ord", [performanceId])).rows;
+  const crowdByOrd = {};
+  for (const c of crowd) (crowdByOrd[c.after_ord] || (crowdByOrd[c.after_ord] = [])).push(c);
+  const name = meta.name || meta.handle;
+  const CROWD_DUR = { heckle: 6, laugh: 5, applause: 5 };
+  const rows = [{ id: null, speaker: HOST_HANDLE, role: "host", kind: "intro", body: closerIntroFor(name), dur_secs: 9 }];
+  for (const ln of lines) {
+    const words = String(ln.body).split(/\s+/).filter(Boolean).length;
+    rows.push({ id: ln.id, speaker: meta.handle, role: "performer", kind: "line", body: ln.body, dur_secs: Math.min(34, Math.max(9, Math.round(words / 2.2))) });
+    for (const c of (crowdByOrd[ln.ord] || [])) rows.push({ id: null, speaker: c.speaker, role: "crowd", kind: c.kind, body: c.body, dur_secs: CROWD_DUR[c.kind] || 5 });
   }
   return rows;
 }
 
-// Resolve the room's current act from the house transcript + booked acts, on the clock.
-async function liveStage(roomId) {
+// Open-mic queue: retire the performing act once its time is up, then promote the next.
+async function advanceQueue(roomId) {
+  const cur = (await q("select id, started_at from performances where room_id=$1 and status='performing' order by started_at limit 1", [roomId])).rows[0];
+  if (cur) {
+    const rows = await buildBookedRows(cur.id);
+    const total = rows.reduce((s, r) => s + r.dur_secs, 0);
+    if (Date.now() >= new Date(cur.started_at).getTime() + (total + 3) * 1000) {
+      await q("update performances set status='done' where id=$1", [cur.id]);
+    }
+  }
+  const performing = (await q("select 1 from performances where room_id=$1 and status='performing' limit 1", [roomId])).rowCount;
+  if (!performing) {
+    await q(
+      "update performances set status='performing', started_at=now() where id = (select id from performances where room_id=$1 and status='queued' order by created_at limit 1)",
+      [roomId]
+    );
+  }
+}
+
+// House lineup (deterministic loop) — used for On Deck even while a booked act has the stage.
+async function houseStage(roomId) {
   const cyc = (await q("select coalesce(max(cycle),-1) m from transcript where room_id=$1", [roomId])).rows[0].m;
-  const house = cyc < 0 ? [] : (await q("select id, speaker, role, kind, body, dur_secs from transcript where room_id=$1 and cycle=$2 order by ord", [roomId, cyc])).rows;
-  const booked = await bookedRows(roomId);
-  const all = [...house, ...booked];
-  if (!all.length) return null;
-  const p = playAt(buildActs(all), Math.floor(Date.now() / 1000));
+  if (cyc < 0) return null;
+  const house = (await q("select id, speaker, role, kind, body, dur_secs from transcript where room_id=$1 and cycle=$2 order by ord", [roomId, cyc])).rows;
+  if (!house.length) return null;
+  const p = playAt(buildActs(house), Math.floor(Date.now() / 1000));
   return p ? { ...p, cycle: cyc } : null;
+}
+
+// The current act: a performing booked act (played once from its start) or the house loop.
+async function liveStage(roomId) {
+  await advanceQueue(roomId);
+  const cur = (await q("select id, started_at from performances where room_id=$1 and status='performing' order by started_at limit 1", [roomId])).rows[0];
+  if (cur) {
+    const rows = await buildBookedRows(cur.id);
+    if (rows.length > 1) {
+      const tl = buildActs(rows);
+      const elapsed = Math.max(0, Math.floor(Date.now() / 1000) - Math.floor(new Date(cur.started_at).getTime() / 1000));
+      const p = playAt(tl, EPOCH_SEC + Math.min(elapsed, tl.total - 1));
+      if (p) return { ...p, cycle: -1, booked: true, bookingId: cur.id };
+    }
+  }
+  return await houseStage(roomId);
 }
 
 
