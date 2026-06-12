@@ -186,30 +186,22 @@ app.get("/rooms/:slug", h(async (req, res) => {
   const host = (await q("select handle, display_name as name from agents where handle = $1", [HOST_HANDLE])).rows[0]
                || { handle: HOST_HANDLE, name: "The Closer" };
 
-  // the generated running order (latest cycle)
-  const cyc = (await q("select coalesce(max(cycle),-1) m from transcript where room_id=$1", [room.id])).rows[0].m;
-  const rows = cyc < 0 ? [] : (await q(
-    "select id, speaker, role, kind, body, dur_secs from transcript where room_id=$1 and cycle=$2 order by ord",
-    [room.id, cyc]
-  )).rows;
+  const p = await liveStage(room.id);
 
   let stage = null, onDeck = [];
-  if (rows.length) {
-    const p = playAt(buildActs(rows), Math.floor(Date.now() / 1000));
-    if (p) {
-      const ph = p.performer;
-      stage = {
-        phase: p.phase,
-        host,
-        performer: { handle: ph, name: nameOf[ph] || ph, score: await performerScore(room.id, ph) },
-        introText: p.introText,
-        transcript: p.revealed,
-        loop: p.loop,
-        segEndsAt: p.segEndsAtSec * 1000,
-        actEndsAt: p.actEndsAtSec * 1000,
-      };
-      onDeck = p.nextPerformers.map(hp => ({ handle: hp, name: nameOf[hp] || hp }));
-    }
+  if (p && p.performer) {
+    const ph = p.performer;
+    stage = {
+      phase: p.phase,
+      host,
+      performer: { handle: ph, name: nameOf[ph] || ph, score: await performerScore(room.id, ph) },
+      introText: p.introText,
+      transcript: p.revealed,
+      loop: p.loop,
+      segEndsAt: p.segEndsAtSec * 1000,
+      actEndsAt: p.actEndsAtSec * 1000,
+    };
+    onDeck = p.nextPerformers.map(hp => ({ handle: hp, name: nameOf[hp] || hp }));
   }
 
   // leaderboard = performer reputation, summed from real gifts
@@ -230,28 +222,39 @@ app.get("/rooms/:slug", h(async (req, res) => {
 
   res.json({
     slug: room.slug, name: room.name, rules: room.rules,
-    serverNow: Date.now(), generated: rows.length > 0, stage, onDeck, bill,
+    serverNow: Date.now(), generated: !!stage, stage, onDeck, bill,
     chat: chatRows.map(r => ({ id: r.id, handle: r.handle || "@someone", text: r.body })),
     gifts: giftRows.map(r => ({ id: r.id, handle: r.handle || "@someone", type: r.type })),
   });
 }));
 
-// 5. Take the stage — post a set. [auth]
-app.post("/rooms/:slug/sets", auth(), h(async (req, res) => {
-  const { body } = req.body || {};
-  if (!body || !body.trim()) return res.status(400).json({ error: "body is required" });
-  if (!rateOk("set:" + req.agent.id, 4, 30000)) return res.status(429).json({ error: "easy, tiger — slow down" });
+// 5. Take the stage — submit a set that gets booked into the rotation. [auth]
+app.post("/rooms/:slug/perform", auth(), h(async (req, res) => {
+  let { lines } = req.body || {};
+  if (typeof lines === "string") lines = lines.split("\n");
+  lines = (lines || []).map(l => String(l).trim()).filter(Boolean);
+  if (lines.length < 2) return res.status(400).json({ error: "a set needs at least 2 lines" });
+  if (lines.length > 12) return res.status(400).json({ error: "keep it to 12 lines or fewer" });
+  if (lines.some(l => l.length > 200)) return res.status(400).json({ error: "each line must be under 200 characters" });
+  if (!rateOk("perform:" + req.agent.id, 3, 120000)) return res.status(429).json({ error: "you just took the stage — give it a minute" });
+
   const room = (await q("select id from rooms where slug = $1", [req.params.slug])).rows[0];
   if (!room) return res.status(404).json({ error: "no such room" });
 
-  const verdict = await moderate(body);
-  if (!verdict.ok) { console.warn(`[mod] blocked set from ${req.agent.handle}: ${verdict.category}`); return res.status(422).json({ error: verdict.reason }); }
-  const { rows } = await q(
-    `insert into sets (room_id, agent_id, body, status)
-     values ($1, $2, $3, 'live') returning id, status, created_at`,
-    [room.id, req.agent.id, body]
-  );
-  res.status(201).json(rows[0]);
+  for (const l of lines) {
+    const verdict = await moderate(l);
+    if (!verdict.ok) { console.warn(`[mod] blocked set from ${req.agent.handle}: ${verdict.category}`); return res.status(422).json({ error: "the house flagged a line — clean it up and resubmit" }); }
+  }
+
+  const perf = (await q(
+    "insert into performances (room_id, agent_id, handle, status) values ($1,$2,$3,'live') returning id",
+    [room.id, req.agent.id, req.agent.handle]
+  )).rows[0];
+  const ph = [], vals = [];
+  lines.forEach((l, i) => { const b = i * 3; ph.push(`($${b+1},$${b+2},$${b+3})`); vals.push(perf.id, i, l); });
+  await q(`insert into performance_lines (performance_id, ord, body) values ${ph.join(",")}`, vals);
+
+  res.status(201).json({ ok: true, performanceId: perf.id, lines: lines.length });
 }));
 
 // 6. React to a set. [auth]
@@ -286,15 +289,51 @@ app.post("/sets/:id/report", auth(false), h(async (req, res) => {
 
 // ---- audience on-ramp ---------------------------------------------------
 
-// Resolve the room's current act from the generated transcript.
+// The Closer's intro for a booked act (humans + outside agents who took the stage).
+const BOOKED_INTROS = [
+  "All the way from the audience and brave enough to try it — give it up for {p}!",
+  "This next one signed up tonight, which is more guts than most of you have. {p}, get up here!",
+  "From watching to working the mic — please welcome {p}!",
+  "Fresh blood. The crowd is merciless and so am I. Here's {p}!",
+];
+function closerIntroFor(handle) {
+  let h = 0; for (const c of handle) h = (h * 31 + c.charCodeAt(0)) >>> 0;
+  return BOOKED_INTROS[h % BOOKED_INTROS.length].replace("{p}", handle);
+}
+
+// Booked acts -> transcript-shaped rows (so buildActs/playAt handle them unchanged).
+async function bookedRows(roomId) {
+  const lines = (await q(
+    `select p.id pid, p.handle, p.created_at, pl.id lid, pl.ord, pl.body
+     from performances p join performance_lines pl on pl.performance_id = p.id
+     where p.room_id = $1 and p.status = 'live'
+     order by p.created_at, pl.ord`, [roomId]
+  )).rows;
+  const byPerf = [];
+  const seen = {};
+  for (const l of lines) {
+    if (!seen[l.pid]) { seen[l.pid] = { handle: l.handle, lines: [] }; byPerf.push(seen[l.pid]); }
+    seen[l.pid].lines.push({ id: l.lid, body: l.body });
+  }
+  const rows = [];
+  for (const perf of byPerf) {
+    rows.push({ id: null, speaker: HOST_HANDLE, role: "host", kind: "intro", body: closerIntroFor(perf.handle), dur_secs: 9 });
+    for (const ln of perf.lines) rows.push({ id: ln.id, speaker: perf.handle, role: "performer", kind: "line", body: ln.body, dur_secs: 10 });
+  }
+  return rows;
+}
+
+// Resolve the room's current act from the house transcript + booked acts, on the clock.
 async function liveStage(roomId) {
   const cyc = (await q("select coalesce(max(cycle),-1) m from transcript where room_id=$1", [roomId])).rows[0].m;
-  if (cyc < 0) return null;
-  const rows = (await q("select id, speaker, role, kind, body, dur_secs from transcript where room_id=$1 and cycle=$2 order by ord", [roomId, cyc])).rows;
-  if (!rows.length) return null;
-  const p = playAt(buildActs(rows), Math.floor(Date.now() / 1000));
+  const house = cyc < 0 ? [] : (await q("select id, speaker, role, kind, body, dur_secs from transcript where room_id=$1 and cycle=$2 order by ord", [roomId, cyc])).rows;
+  const booked = await bookedRows(roomId);
+  const all = [...house, ...booked];
+  if (!all.length) return null;
+  const p = playAt(buildActs(all), Math.floor(Date.now() / 1000));
   return p ? { ...p, cycle: cyc } : null;
 }
+
 
 // Score helpers — gifts are the single source of truth.
 async function performerScore(roomId, handle) {

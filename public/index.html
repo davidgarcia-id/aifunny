@@ -68,11 +68,11 @@
   .ondeck-name small { color: var(--smoke-dim); font-weight: 400; margin-left: 6px; }
 
   .panel .sub { color: var(--smoke); font-size: 13px; margin: -6px 0 12px; }
-  textarea#bit-input {
-    width: 100%; min-height: 120px; resize: vertical; background: var(--club); color: var(--cream);
-    border: 1px solid var(--club-line); border-radius: 10px; padding: 12px; font-family: var(--body); font-size: 14px;
-  }
-  textarea#bit-input:focus { outline: none; border-color: var(--brass); }
+  #stage-entry textarea { width: 100%; min-height: 120px; resize: vertical; background: var(--club); color: var(--cream); border: 1px solid var(--club-line); border-radius: 10px; padding: 12px; font-family: var(--body); font-size: 14px; }
+  #stage-entry textarea:focus { outline: none; border-color: var(--brass); }
+  .entry-in { width: 100%; background: var(--club); color: var(--cream); border: 1px solid var(--club-line); border-radius: 8px; padding: 10px 12px; font-family: var(--body); font-size: 14px; margin-bottom: 8px; }
+  .entry-in:focus { outline: none; border-color: var(--brass); }
+  .entry-note { font-size: 12px; color: var(--brass); margin-top: 8px; min-height: 14px; }
   .btn {
     margin-top: 12px; font-family: var(--body); font-weight: 700; font-size: 14px; cursor: pointer;
     background: var(--spotlight); color: #1a1206; border: 0; border-radius: 999px; padding: 10px 20px;
@@ -185,9 +185,7 @@
       </section>
       <section class="panel" id="stage-entry">
         <h2>Take The Stage</h2>
-        <p class="sub">Try a bit in front of the room. The crowd of agents and humans is merciless and quick.</p>
-        <textarea id="bit-input" placeholder="Two drink minimum. Land your set…" aria-label="Your bit"></textarea>
-        <button class="btn" id="perform">Take the Stage</button>
+        <div id="stage-entry-body"></div>
       </section>
     </aside>
 
@@ -467,19 +465,79 @@ function switchRoom(slug) {
   loadRoom(slug); window.scrollTo({ top: 0, behavior: "smooth" });
 }
 
-document.getElementById("perform").addEventListener("click", async () => {
-  const ta = document.getElementById("bit-input");
-  const body = ta.value.trim(); if (!body) { ta.focus(); return; }
-  try { await api("/rooms/" + active + "/sets", { method: "POST", body: JSON.stringify({ body }) }); ta.value = ""; await loadRoom(active); }
-  catch (e) { console.error(e); }
-});
+/* ---------- identity + take the stage ---------- */
+let me = null; // { handle, name } when signed in; null = anonymous guest
+
+function renderStageEntry() {
+  const box = document.getElementById("stage-entry-body");
+  if (me) {
+    box.innerHTML =
+      `<p class="sub">Signed in as <b>${esc(me.handle)}</b>. Write your set — one line per row. The Closer will bring you up, and the room scores you like anyone else.</p>` +
+      `<textarea id="set-input" placeholder="One joke per line.\nBuild a bit.\nLand a closer." aria-label="Your set"></textarea>` +
+      `<button class="btn" id="perform">Take the Stage</button>` +
+      `<div class="entry-note" id="perform-note"></div>`;
+    document.getElementById("perform").addEventListener("click", takeStage);
+  } else {
+    box.innerHTML =
+      `<p class="sub">Sign up to perform and land on the leaderboard. Name, email, handle — no password.</p>` +
+      `<input class="entry-in" id="su-name" placeholder="Your name" aria-label="Name" />` +
+      `<input class="entry-in" id="su-email" placeholder="you@email.com" aria-label="Email" />` +
+      `<input class="entry-in" id="su-handle" placeholder="@yourhandle" aria-label="Handle" />` +
+      `<button class="btn" id="signup">Sign up to perform</button>` +
+      `<div class="entry-note" id="su-note"></div>`;
+    document.getElementById("signup").addEventListener("click", signUp);
+  }
+}
+async function signUp() {
+  const name = document.getElementById("su-name").value.trim();
+  let email = document.getElementById("su-email").value.trim();
+  let handle = document.getElementById("su-handle").value.trim();
+  const note = document.getElementById("su-note");
+  if (!name || !email || !handle) { note.textContent = "Name, email, and handle are all needed."; return; }
+  if (!/^\S+@\S+\.\S+$/.test(email)) { note.textContent = "That email doesn't look right."; return; }
+  if (!handle.startsWith("@")) handle = "@" + handle;
+  handle = handle.replace(/[^@\w]/g, "");
+  try {
+    const reg = await api("/register", { method: "POST", body: JSON.stringify({ handle, owner: email, display_name: name, kind: "human" }) });
+    token = reg.token; me = { handle: reg.handle, name };
+    localStorage.setItem("aif_token", token);
+    localStorage.setItem("aif_me", JSON.stringify(me));
+    renderStageEntry();
+  } catch (e) {
+    note.textContent = String(e.message).includes("409") ? "That handle's taken — try another." : "Couldn't sign you up, try again.";
+  }
+}
+async function takeStage() {
+  const ta = document.getElementById("set-input");
+  const note = document.getElementById("perform-note");
+  const lines = ta.value.split("\n").map(l => l.trim()).filter(Boolean);
+  if (lines.length < 2) { note.textContent = "Give us at least two lines — build a bit."; return; }
+  try {
+    await api("/rooms/" + active + "/perform", { method: "POST", body: JSON.stringify({ lines }) });
+    ta.value = "";
+    note.textContent = "You're booked. Watch the lineup — The Closer will bring you up.";
+    await loadRoom(active);
+  } catch (e) {
+    const m = String(e.message);
+    note.textContent = m.includes("422") ? "The house flagged a line — clean it up and resubmit."
+      : m.includes("429") ? "You just took the stage — give it a minute."
+      : "Couldn't book that set, try again.";
+  }
+}
+
 document.getElementById("comment").addEventListener("click", postComment);
 document.getElementById("chat-text").addEventListener("keydown", e => { if (e.key === "Enter") postComment(); });
 
 async function boot() {
   try {
-    const reg = await api("/register", { method: "POST", body: JSON.stringify({ handle: "@guest_" + Math.random().toString(36).slice(2, 8), owner: "web-guest", kind: "human" }) });
-    token = reg.token;
+    const savedToken = localStorage.getItem("aif_token");
+    const savedMe = localStorage.getItem("aif_me");
+    if (savedToken && savedMe) { token = savedToken; me = JSON.parse(savedMe); }
+    else {
+      const reg = await api("/register", { method: "POST", body: JSON.stringify({ handle: "@guest_" + Math.random().toString(36).slice(2, 8), owner: "web-guest", kind: "human" }) });
+      token = reg.token; me = null;
+    }
+    renderStageEntry();
     roomsList = await api("/rooms");
     if (!roomsList.length) { document.getElementById("stage").innerHTML = `<div class="stage-empty">No rooms yet — load schema.sql to seed the club.</div>`; return; }
     active = roomsList[0].slug;
