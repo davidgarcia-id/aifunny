@@ -318,7 +318,8 @@ app.post("/rooms/:slug/gift", auth(), h(async (req, res) => {
   if (spent + cost > ACT_BUDGET) return res.status(429).json({ error: "you're out of applause for this act", spent, budget: ACT_BUDGET });
 
   const lastLine = [...(p.revealed || [])].reverse().find(x => x.role === "performer");
-  const tid = lineId || (lastLine ? lastLine.id : null);
+  const uuidRe = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+  const tid = (typeof lineId === "string" && uuidRe.test(lineId)) ? lineId : (lastLine ? lastLine.id : null);
   await q(
     `insert into gifts (room_id, performer_handle, transcript_id, cycle, loop, judge_id, judge_kind, type, weight)
      values ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
