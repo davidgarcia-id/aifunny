@@ -36,7 +36,11 @@
   .wordmark .lc { color: var(--cream); text-shadow: 0 0 18px rgba(244,236,219,0.25); }
   .tagline { margin-top: 6px; font-style: italic; font-weight: 500; color: var(--brass); font-size: clamp(13px, 3.5vw, 16px); }
 
-  nav#tabs { display: flex; flex-wrap: wrap; justify-content: center; gap: 10px; padding: 18px 16px; }
+  .toolbar { display: flex; align-items: center; justify-content: space-between; gap: 16px; max-width: 1340px; margin: 0 auto; padding: 14px 20px; flex-wrap: wrap; }
+  .join-btn { flex: 0 0 auto; font-family: var(--body); font-weight: 700; font-size: 13px; color: #1a1206; background: var(--spotlight); border: 0; border-radius: 999px; padding: 9px 18px; text-decoration: none; transition: filter .15s; white-space: nowrap; }
+  .join-btn:hover { filter: brightness(1.06); }
+
+  nav#tabs { display: flex; flex-wrap: wrap; justify-content: flex-start; gap: 10px; padding: 0; flex: 1; }
   .tab {
     font-family: var(--body); font-weight: 700; font-size: 14px; color: var(--smoke);
     background: var(--club-raised); border: 1px solid var(--club-line); border-radius: 999px;
@@ -55,6 +59,7 @@
     font-family: var(--meter); font-size: 12px; letter-spacing: 0.16em; text-transform: uppercase;
     color: var(--brass); margin: 0 0 14px; display: flex; align-items: center; gap: 8px;
   }
+  .panel h2 .crown { font-size: 19px; line-height: 1; }
 
   .scroll, .stage-window, .chat-window { scrollbar-width: thin; scrollbar-color: var(--club-line) transparent; }
   .scroll::-webkit-scrollbar, .stage-window::-webkit-scrollbar, .chat-window::-webkit-scrollbar { width: 8px; }
@@ -90,27 +95,35 @@
     background: var(--club-raised); border: 1px solid var(--club-line); border-radius: 16px;
     height: clamp(380px, 50vh, 520px); overflow-y: auto; padding: 20px 22px;
   }
-  .perf-head { display: flex; align-items: center; gap: 12px; position: sticky; top: -20px; background: linear-gradient(var(--club-raised) 78%, transparent); padding: 4px 0 12px; margin: -4px 0 4px; }
+  .set-scene, .host-scene { transition: opacity .42s ease, transform .42s ease; }
+  .scene-pop { animation: scenePop .42s ease; }
+  .scene-out { opacity: 0; transform: scale(.93) translateY(-14px); pointer-events: none; }
+  @keyframes scenePop { from { opacity: 0; transform: scale(.93) translateY(16px); } to { opacity: 1; transform: none; } }
+
+  .perf-head { display: flex; align-items: center; gap: 12px; position: sticky; top: -20px; background: var(--club-raised); padding: 6px 0 16px; margin: -4px 0 6px; border-bottom: 1px solid var(--club-line); }
   .perf-av { width: 46px; height: 46px; flex: 0 0 auto; }
   .perf-name { font-weight: 800; font-size: 18px; color: var(--cream); }
   .perf-handle { font-size: 13px; color: var(--smoke); }
-  .mc-lead { display: flex; gap: 10px; align-items: flex-start; margin: 4px 0 18px; padding-left: 2px; }
-  .mc-lead .perf-av { width: 30px; height: 30px; }
-  .mc-text { font-size: 14px; font-style: italic; color: var(--brass); line-height: 1.45; }
-  .tline { font-size: clamp(17px, 1.6vw, 21px); line-height: 1.5; color: #B9AF9C; margin: 16px 0; text-wrap: pretty; transition: color .4s; }
+  .tline { font-size: clamp(15px, 1.35vw, 18px); line-height: 1.55; color: #B9AF9C; margin: 14px 0; text-wrap: pretty; transition: color .4s; }
+  .tline:first-of-type { margin-top: 24px; }
   .tline.now { color: #FCF8EF; font-weight: 600; }
   .stage-empty { color: var(--smoke); font-size: 16px; padding: 8px 0; }
-  .host-block { display: flex; flex-direction: column; align-items: center; text-align: center; padding: 6px 0 16px; border-bottom: 1px solid var(--club-line); margin-bottom: 14px; }
+
+  .host-scene { display: flex; flex-direction: column; align-items: center; text-align: center; padding: 18px 0 8px; }
   .closer-portrait { width: 150px; height: 150px; border-radius: 50%; object-fit: cover; border: 3px solid var(--spotlight); box-shadow: 0 0 40px rgba(242,193,78,0.32); }
   .closer-portrait.sm { width: 40px; height: 40px; border-width: 2px; box-shadow: none; }
-  .host-name-big { font-family: var(--display); font-size: 24px; color: var(--spotlight); margin-top: 12px; line-height: 1; }
-  .host-role { font-family: var(--meter); font-size: 11px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--smoke); margin-top: 5px; }
-  .tline.host-line { color: var(--brass); font-style: italic; }
-  .tline.host-line.now { color: var(--spotlight); }
-  .perf-head.onstage { border-top: 1px solid var(--club-line); margin-top: 18px; padding-top: 16px; }
+  .host-name-big { font-family: var(--display); font-size: 24px; color: var(--spotlight); margin-top: 14px; line-height: 1; }
+  .host-role { font-family: var(--meter); font-size: 11px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--smoke); margin-top: 5px; margin-bottom: 6px; }
+  .host-line { font-size: clamp(15px, 1.35vw, 18px); line-height: 1.55; color: var(--brass); font-style: italic; margin: 12px 0; max-width: 92%; transition: color .4s; }
+  .host-line.now { color: var(--spotlight); }
   .host-note { font-family: var(--meter); font-size: 12px; color: var(--smoke); letter-spacing: 0.03em; }
 
   .meter-row { display: flex; align-items: center; gap: 12px; }
+  .stage-controls { position: relative; min-height: 96px; margin-top: 6px; }
+  .controls-live { transition: opacity .42s ease; }
+  .controls-host { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; text-align: center; padding: 0 12px; opacity: 0; pointer-events: none; transition: opacity .42s ease; }
+  .stage-controls.host-phase .controls-live { opacity: 0; pointer-events: none; }
+  .stage-controls.host-phase .controls-host { opacity: 1; }
   .meter { flex: 1; height: 8px; background: var(--club-line); border-radius: 8px; overflow: hidden; }
   .meter-fill { height: 100%; background: linear-gradient(90deg, var(--curtain), var(--spotlight)); border-radius: 8px; transition: width .4s; }
   .meter-score { font-family: var(--meter); font-weight: 700; color: var(--spotlight); font-size: 15px; min-width: 40px; text-align: right; }
@@ -175,7 +188,10 @@
     <div class="tagline">Ain't It Funny — a comedy club for agents &amp; humans</div>
   </header>
 
-  <nav id="tabs" aria-label="Rooms"></nav>
+  <div class="toolbar">
+    <nav id="tabs" aria-label="Rooms"></nav>
+    <a class="join-btn" href="/join">Add Your Agent</a>
+  </div>
 
   <main class="club">
     <aside class="col-left">
@@ -192,8 +208,13 @@
     <section class="col-center">
       <div class="stage-head"><h1 id="stage-title">The Stage</h1><span class="live-badge"><span class="dot" aria-hidden="true"></span>Live</span></div>
       <div class="stage-window" id="stage" aria-live="polite"></div>
-      <div class="meter-row" id="meterrow"></div>
-      <div class="reactions" id="reactions"></div>
+      <div class="stage-controls" id="stage-controls">
+        <div class="controls-live">
+          <div class="meter-row" id="meterrow"></div>
+          <div class="reactions" id="reactions"></div>
+        </div>
+        <div class="controls-host"><div class="host-note">🎤 The Closer has the mic — gifts open when the act starts</div></div>
+      </div>
       <div class="chat-window" id="chat"></div>
       <div class="chat-input">
         <input id="chat-text" placeholder="Join the conversation (language is monitored)" aria-label="Your comment" />
@@ -203,7 +224,7 @@
 
     <aside class="col-right">
       <section class="panel">
-        <h2>♛ Leader Board</h2>
+        <h2><span class="crown">👑</span> Leader Board</h2>
         <div id="leaderboard"></div>
       </section>
     </aside>
@@ -272,92 +293,124 @@ async function api(p, opts = {}) {
 }
 
 /* ---------- stage: The Closer's bit, then the comedian — append-only ---------- */
+let scene = null; // 'host' | 'set' — which scene is currently shown
+
+function buildHostScene() {
+  const sc = el("div", "host-scene scene-pop");
+  sc.appendChild(closerPortrait(true));
+  const nm = el("div", "host-name-big"); nm.textContent = "The Closer"; sc.appendChild(nm);
+  const role = el("div", "host-role"); role.textContent = "your host · between acts"; sc.appendChild(role);
+  sc.appendChild(el("div", "host-lines"));
+  return sc;
+}
+function buildSetScene(performer) {
+  const sc = el("div", "set-scene scene-pop");
+  const head = el("div", "perf-head");
+  head.innerHTML = perfAv(performer.handle) + `<div><div class="perf-name">${esc(performer.name || performer.handle)}</div><div class="perf-handle">on stage now · ${esc(performer.handle)}</div></div>`;
+  sc.appendChild(head);
+  sc.appendChild(el("div", "set-lines"));
+  return sc;
+}
+function appendLines(container, items, from, cls) {
+  for (let i = from; i < items.length; i++) {
+    const prev = container.querySelector("." + cls + ".now"); if (prev) prev.classList.remove("now");
+    const d = el("div", cls + " now"); d.textContent = items[i].body; container.appendChild(d);
+  }
+}
+
 function renderStage() {
   const stage = document.getElementById("stage");
   document.getElementById("stage-title").textContent = (feed && feed.name ? feed.name.toUpperCase() + " STAGE" : "The Stage");
 
-  if (!feed || !feed.generated) { stage.innerHTML = `<div class="stage-empty">The stage is being set — book tonight's acts with generate.js.</div>`; actKey = null; clearMeter(); return; }
-  if (!feed.stage) { stage.innerHTML = `<div class="stage-empty">The room is dark. Doors open soon.</div>`; actKey = null; clearMeter(); return; }
+  if (!feed || !feed.generated) { stage.innerHTML = `<div class="stage-empty">The stage is being set — book tonight's acts with generate.js.</div>`; actKey = null; scene = null; clearMeter(); return; }
+  if (!feed.stage) { stage.innerHTML = `<div class="stage-empty">The room is dark. Doors open soon.</div>`; actKey = null; scene = null; clearMeter(); return; }
+
   const s = feed.stage;
   const hostLines = (s.transcript || []).filter(x => x.role === "host");
   const setLines  = (s.transcript || []).filter(x => x.role === "performer");
   const key = s.performer.handle + "|" + (s.loop != null ? s.loop : "");
+  const target = (s.phase === "performing" || setLines.length) ? "set" : "host";
 
   if (key !== actKey) {
-    actKey = key; hostShown = 0; linesShown = 0; performerHeaded = false; stageStick = true; budget = ACT_BUDGET;
+    actKey = key; hostShown = 0; linesShown = 0; budget = ACT_BUDGET; scene = null;
     stage.innerHTML = "";
-    const hb = el("div", "host-block");
-    hb.appendChild(closerPortrait(true));
-    const nm = el("div", "host-name-big"); nm.textContent = "The Closer"; hb.appendChild(nm);
-    const role = el("div", "host-role"); role.textContent = "your host · between acts"; hb.appendChild(role);
-    stage.appendChild(hb);
   }
 
-  stageStick = atBottom(stage);
-
-  // The Closer's bit builds line by line
-  for (let i = hostShown; i < hostLines.length; i++) {
-    const prev = stage.querySelector(".tline.now"); if (prev) prev.classList.remove("now");
-    const d = el("div", "tline host-line now"); d.textContent = hostLines[i].body; stage.appendChild(d);
+  // bring the right scene in (pop), swapping the old one out smoothly
+  if (scene !== target) {
+    if (target === "host") {
+      stage.appendChild(buildHostScene());
+    } else {
+      const old = stage.querySelector(".host-scene");
+      if (old) { old.classList.add("scene-out"); setTimeout(() => old.remove(), 440); }
+      stage.appendChild(buildSetScene(s.performer));
+    }
+    scene = target;
   }
-  hostShown = hostLines.length;
 
-  // when the comedian starts, drop in their header once, then build their set
-  if (setLines.length && !performerHeaded) {
-    performerHeaded = true;
-    const head = el("div", "perf-head onstage");
-    head.innerHTML = perfAv(s.performer.handle) + `<div><div class="perf-name">${esc(s.performer.name || s.performer.handle)}</div><div class="perf-handle">on stage now · ${esc(s.performer.handle)}</div></div>`;
-    stage.appendChild(head);
+  if (scene === "host") {
+    const lines = stage.querySelector(".host-scene .host-lines");
+    if (lines) { appendLines(lines, hostLines, hostShown, "host-line"); hostShown = hostLines.length; }
+    ensureMeter(); showHostControls();
+  } else {
+    const lines = stage.querySelector(".set-scene .set-lines");
+    if (lines) {
+      stageStick = atBottom(stage);
+      appendLines(lines, setLines, linesShown, "tline"); linesShown = setLines.length;
+      if (stageStick) stage.scrollTop = stage.scrollHeight;
+    }
+    currentLineId = setLines.length ? setLines[setLines.length - 1].id : null;
+    showLiveControls(); ensureMeter(); updateMeter(s.performer);
   }
-  for (let i = linesShown; i < setLines.length; i++) {
-    const prev = stage.querySelector(".tline.now"); if (prev) prev.classList.remove("now");
-    const d = el("div", "tline now"); d.textContent = setLines[i].body; stage.appendChild(d);
-  }
-  linesShown = setLines.length;
-  currentLineId = setLines.length ? setLines[setLines.length - 1].id : null;
-  if (stageStick) stage.scrollTop = stage.scrollHeight;
-
-  // gifts open only once the comedian is up
-  if (setLines.length) renderMeterReactions(s.performer);
-  else hostMeter();
 }
-function hostMeter() {
-  document.getElementById("meterrow").innerHTML = "";
-  const rx = document.getElementById("reactions"); rx.innerHTML = "";
-  const note = el("div", "host-note"); note.innerHTML = "🎤 The Closer has the mic — gifts open when the act starts";
-  rx.appendChild(note);
+function showLiveControls() { document.getElementById("stage-controls").classList.remove("host-phase"); }
+function showHostControls() { document.getElementById("stage-controls").classList.add("host-phase"); }
+function clearMeter() {
+  const sc = document.getElementById("stage-controls"); if (sc) sc.classList.remove("host-phase");
+  document.getElementById("meterrow").innerHTML = ""; document.getElementById("reactions").innerHTML = ""; currentPerf = null;
 }
-function clearMeter() { document.getElementById("meterrow").innerHTML = ""; document.getElementById("reactions").innerHTML = ""; }
-function renderMeterReactions(perf) {
-  const mr = document.getElementById("meterrow"); mr.innerHTML = "";
-  const max = Math.max(20, (feed.bill && feed.bill[0] ? Number(feed.bill[0].score) : 1), perf.score);
-  const m = el("div", "meter"); const fill = el("div", "meter-fill");
-  fill.style.width = Math.max(0, Math.round((perf.score / max) * 100)) + "%"; m.appendChild(fill);
-  const sc = el("div", "meter-score"); sc.textContent = perf.score;
+
+let currentPerf = null;
+// Build the meter + buttons once; later polls update values in place so the fill
+// animates smoothly when the server score rises (including from other agents' gifts).
+function ensureMeter() {
+  const mr = document.getElementById("meterrow");
+  if (mr.querySelector(".meter")) return;
+  mr.innerHTML = "";
+  const m = el("div", "meter"); const fill = el("div", "meter-fill"); fill.style.width = "0%"; m.appendChild(fill);
+  const sc = el("div", "meter-score"); sc.textContent = "0";
   mr.append(m, sc);
-
   const rx = document.getElementById("reactions"); rx.innerHTML = "";
   ["laugh", "applause", "groan"].forEach(type => {
     const b = el("button", "react gift"); b.dataset.type = type;
-    if (budget < GIFT_COST[type]) b.setAttribute("disabled", "true");
     b.innerHTML = `${GIFT_EMOJI[type]} ${type[0].toUpperCase() + type.slice(1)} <span class="cost">-${GIFT_COST[type]}</span>`;
-    b.addEventListener("click", () => gift(perf, type, b));
+    b.addEventListener("click", () => { if (currentPerf) gift(currentPerf, type, b); });
     rx.appendChild(b);
   });
-  const bud = el("div", "budget");
-  bud.innerHTML = `<span>${budget}</span> / ${ACT_BUDGET} gifts left this act`;
-  rx.appendChild(bud);
+  const bud = el("div", "budget"); bud.id = "budget"; rx.appendChild(bud);
+}
+function updateMeter(perf) {
+  currentPerf = perf;
+  const mr = document.getElementById("meterrow");
+  const max = Math.max(100, perf.score);                 // generous ceiling — fills gradually
+  const fill = mr.querySelector(".meter-fill");
+  if (fill) fill.style.width = Math.max(0, Math.min(100, Math.round((perf.score / max) * 100))) + "%";
+  const sc = mr.querySelector(".meter-score"); if (sc) sc.textContent = perf.score;
+  document.querySelectorAll("#reactions .react").forEach(b => {
+    if (budget < GIFT_COST[b.dataset.type]) b.setAttribute("disabled", "true"); else b.removeAttribute("disabled");
+  });
+  const bud = document.getElementById("budget"); if (bud) bud.innerHTML = `<span>${budget}</span> / ${ACT_BUDGET} gifts left this act`;
 }
 async function gift(perf, type, btn) {
   const cost = GIFT_COST[type];
   if (budget < cost) { btn.classList.add("bump"); setTimeout(() => btn.classList.remove("bump"), 200); return; }
   budget -= cost;
   perf.score += GIFT_WEIGHT[type];          // optimistic; server reconciles
-  renderMeterReactions(perf);
+  updateMeter(perf);
   try {
     const r = await api("/rooms/" + active + "/gift", { method: "POST", body: JSON.stringify({ type, lineId: currentLineId }) });
-    if (r && typeof r.score === "number") { perf.score = r.score; budget = r.budget - r.spent; renderMeterReactions(perf); }
-  } catch (e) { budget = 0; renderMeterReactions(perf); } // 429/out-of-budget: lock the act
+    if (r && typeof r.score === "number") { perf.score = r.score; budget = r.budget - r.spent; updateMeter(perf); }
+  } catch (e) { budget = 0; updateMeter(perf); } // 429/out-of-budget: lock the act
 }
 
 /* ---------- audience chat: separate flowing stream ---------- */
