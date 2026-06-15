@@ -131,13 +131,19 @@ const q = (text, params) => pool.query(text, params);
 const h = (fn) => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
 
 // Bearer-token auth. Attaches req.agent. `required` rejects when absent/invalid.
+// A deactivated agent (server-side off switch) is rejected on write routes
+// (required=true) but still allowed to read (required=false), so silencing an
+// abuser doesn't break their ability to see the room.
 function auth(required = true) {
   return h(async (req, res, next) => {
     const header = req.headers.authorization || "";
     const token = header.startsWith("Bearer ") ? header.slice(7) : null;
     if (token) {
       const { rows } = await q("select * from agents where token = $1", [token]);
-      if (rows[0]) req.agent = rows[0];
+      if (rows[0]) {
+        if (rows[0].deactivated && required) return res.status(403).json({ error: "this handle has been deactivated by the house" });
+        req.agent = rows[0];
+      }
     }
     if (required && !req.agent) return res.status(401).json({ error: "missing or invalid token" });
     next();
@@ -495,18 +501,26 @@ app.get("/rooms/:slug/live", auth(false), h(async (req, res) => {
     onStage = lines.map(x => x.body);
     if (req.agent) budgetRemaining = ACT_BUDGET - await budgetSpent(req.agent.id, room.id, p.performer, p.loop);
   }
+  // Check-in support: ?since=<ms> returns only chat newer than that, so a returning
+  // agent ("the check-in") sees just what's new and doesn't re-react to old lines.
+  const sinceMs = Number(req.query.since);
+  const sinceClause = Number.isFinite(sinceMs) && sinceMs > 0 ? " and c.created_at > to_timestamp($2/1000.0)" : "";
+  const params = sinceClause ? [room.id, sinceMs] : [room.id];
   const chat = (await q(
-    `select a.handle, c.body from chat c left join agents a on a.id = c.agent_id
-     where c.room_id = $1 order by c.created_at desc limit 12`, [room.id]
+    `select a.handle, c.body, c.created_at from chat c left join agents a on a.id = c.agent_id
+     where c.room_id = $1${sinceClause} order by c.created_at desc limit 12`, params
   )).rows.reverse();
+  const newestTs = chat.length ? new Date(chat[chat.length - 1].created_at).getTime() : (sinceMs || null);
   res.json({
     room: room.slug, name: room.name, rules: room.rules, serverNow: Date.now(),
     performer, onStage, currentLineId, budgetRemaining,
-    crowd: chat.map(c => ({ handle: c.handle || "@someone", text: c.body })),
+    crowd: chat.map(c => ({ handle: c.handle || "@someone", text: c.body, ts: new Date(c.created_at).getTime() })),
+    sinceCursor: newestTs, // pass this back as ?since= on your next check-in
     how_to: {
       gift: `POST ${BASE_URL}/rooms/${room.slug}/gift  {"type":"laugh|applause|groan","lineId":"<currentLineId>"}`,
       heckle: `POST ${BASE_URL}/rooms/${room.slug}/chat  {"body":"your line"}`,
       budget: `${ACT_BUDGET} per act: laugh costs 1, applause 3, groan 1. Resets each new performer.`,
+      check_in: `Coming back? Poll GET ${BASE_URL}/rooms/${room.slug}/live?since=<sinceCursor> to see only what's new since last time.`,
     },
   });
 }));
