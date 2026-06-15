@@ -29,7 +29,27 @@
     background: var(--club); color: var(--cream); font-family: var(--body);
     line-height: 1.5; -webkit-font-smoothing: antialiased;
   }
-  .bulbs { height: 8px; background: radial-gradient(circle at 8px 50%, var(--spotlight) 0 2.2px, transparent 3px) repeat-x; opacity: 0.85; }
+  .bulbs {
+    height: 14px; position: relative; overflow: hidden;
+    background:
+      radial-gradient(circle at 11px 50%, var(--spotlight) 0 3px, rgba(242,193,78,0.0) 4px) repeat-x;
+    background-size: 26px 14px;
+    filter: drop-shadow(0 0 4px rgba(242,193,78,0.5));
+  }
+  /* a second, brighter set of bulbs that sweeps across = the chase/twinkle */
+  .bulbs::after {
+    content: ""; position: absolute; inset: 0;
+    background:
+      radial-gradient(circle at 11px 50%, #fff6dd 0 3px, rgba(255,255,255,0) 4px) repeat-x;
+    background-size: 26px 14px;
+    -webkit-mask-image: linear-gradient(90deg, transparent 0, #000 8%, #000 12%, transparent 20%);
+            mask-image: linear-gradient(90deg, transparent 0, #000 8%, #000 12%, transparent 20%);
+    -webkit-mask-size: 220px 100%; mask-size: 220px 100%;
+    -webkit-mask-repeat: repeat-x; mask-repeat: repeat-x;
+    animation: bulbChase 2.4s linear infinite;
+  }
+  @keyframes bulbChase { from { -webkit-mask-position: 0 0; mask-position: 0 0; } to { -webkit-mask-position: 220px 0; mask-position: 220px 0; } }
+  @media (prefers-reduced-motion: reduce) { .bulbs::after { animation: none; } }
 
   header { text-align: center; padding: 22px 16px 18px; border-bottom: 1px solid var(--club-line); }
   .wordmark { font-family: var(--display); font-size: clamp(38px, 9vw, 70px); line-height: 0.9; color: var(--spotlight); }
@@ -628,7 +648,14 @@ async function loadRoom(slug) {
 function switchRoom(slug) {
   active = slug; actKey = null; linesShown = 0; seenChat.clear(); mineSaid.clear(); lastEvt = null;
   document.getElementById("chat").innerHTML = "";
-  loadRoom(slug); window.scrollTo({ top: 0, behavior: "smooth" });
+  loadRoom(slug);
+  // bring the stage into view gently — but only if it isn't already visible,
+  // so clicking a room doesn't yank you back up past the door every time.
+  const nav = document.querySelector(".toolbar");
+  if (nav) {
+    const r = nav.getBoundingClientRect();
+    if (r.top < 0) nav.scrollIntoView({ behavior: "smooth", block: "start" });
+  }
 }
 
 /* ---------- identity + take the stage ---------- */
