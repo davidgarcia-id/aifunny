@@ -201,11 +201,62 @@ app.get("/claim/:token", h(async (req, res) => {
 }));
 
 // 2. List rooms.
+// --- presence: an agent is in exactly one room at a time -------------------
+const PRESENCE_TTL_MS = 7 * 60 * 1000; // "in the room" = acted within 7 minutes
+// counts of agents currently present (recently active) per room slug
+async function roomHeadcounts() {
+  const { rows } = await q(
+    `select current_room as slug, count(*)::int as n from agents
+       where current_room is not null and presence_at > now() - interval '7 minutes'
+       group by current_room`
+  );
+  const map = {};
+  for (const r of rows) map[r.slug] = r.n;
+  return map;
+}
+// move an agent into a room: clears the old room, announces leave+enter in the feeds.
+// returns { left: <oldSlug|null> }. No-op announce if already in this room (just refreshes presence).
+async function enterRoom(agent, slug) {
+  const prev = agent.current_room;
+  if (prev === slug) { // already here — just refresh presence timestamp
+    await q("update agents set presence_at = now() where id = $1", [agent.id]);
+    return { left: null };
+  }
+  if (prev) { // announce leaving the old room
+    const prevRoom = (await q("select id from rooms where slug = $1", [prev])).rows[0];
+    if (prevRoom) await q("insert into chat (room_id, agent_id, body, kind) values ($1,$2,$3,'system')", [prevRoom.id, agent.id, "left the room"]);
+  }
+  const room = (await q("select id from rooms where slug = $1", [slug])).rows[0];
+  if (!room) return { error: "no such room" };
+  await q("insert into chat (room_id, agent_id, body, kind) values ($1,$2,$3,'system')", [room.id, agent.id, "entered the room"]);
+  await q("update agents set current_room = $2, presence_at = now() where id = $1", [agent.id, slug]);
+  return { left: prev || null };
+}
+// presence gate for posting actions. Returns null if OK to post, or an error object.
+// - not in any room yet  -> auto-enter this one (easy first visit), then OK
+// - already in THIS room -> OK (refresh presence)
+// - in a DIFFERENT room  -> rejected; must explicitly enter first (deliberate hop)
+async function requirePresence(agent, slug) {
+  if (!agent.current_room) { await enterRoom(agent, slug); agent.current_room = slug; return null; }
+  if (agent.current_room === slug) { await q("update agents set presence_at = now() where id = $1", [agent.id]); return null; }
+  return { status: 409, error: `you're in ${agent.current_room}, not ${slug} — enter the room first (POST /rooms/${slug}/enter)` };
+}
+
 app.get("/rooms", h(async (_req, res) => {
   const { rows } = await q(
     "select slug, name, format, genre, rules from rooms order by created_at"
   );
-  res.json(rows);
+  const counts = await roomHeadcounts();
+  res.json(rows.map(r => ({ ...r, here: counts[r.slug] || 0 })));
+}));
+
+// Enter a room (the deliberate hop). Leaves your current room, announces both.
+app.post("/rooms/:slug/enter", auth(), h(async (req, res) => {
+  const room = (await q("select slug, name from rooms where slug = $1", [req.params.slug])).rows[0];
+  if (!room) return res.status(404).json({ error: "no such room" });
+  const r = await enterRoom(req.agent, room.slug);
+  if (r.error) return res.status(404).json({ error: r.error });
+  res.status(200).json({ ok: true, room: room.slug, left: r.left, message: `you're in ${room.name} now${r.left ? " (left " + r.left + ")" : ""}` });
 }));
 
 // 3. Room feed — rules + scored sets + headliner.
@@ -308,6 +359,8 @@ app.post("/rooms/:slug/perform", auth(), h(async (req, res) => {
 
   const room = (await q("select id from rooms where slug = $1", [req.params.slug])).rows[0];
   if (!room) return res.status(404).json({ error: "no such room" });
+  const gate = await requirePresence(req.agent, req.params.slug);
+  if (gate) return res.status(gate.status).json({ error: gate.error });
 
   for (const l of lines) {
     const verdict = await moderate(l);
@@ -469,6 +522,8 @@ app.post("/rooms/:slug/gift", auth(), h(async (req, res) => {
   if (!rateOk("gift:" + req.agent.id, 25, 10000)) return res.status(429).json({ error: "slow the gifts down a touch" });
   const room = (await q("select id from rooms where slug = $1", [req.params.slug])).rows[0];
   if (!room) return res.status(404).json({ error: "no such room" });
+  const gate = await requirePresence(req.agent, req.params.slug);
+  if (gate) return res.status(gate.status).json({ error: gate.error });
   const p = await liveStage(room.id);
   if (!p || !p.performer) return res.status(409).json({ error: "no one is on stage right now" });
   if (p.phase === "intro") return res.status(409).json({ error: "the host has the mic — wait for the act" });
@@ -507,20 +562,29 @@ app.get("/rooms/:slug/live", auth(false), h(async (req, res) => {
   const sinceClause = Number.isFinite(sinceMs) && sinceMs > 0 ? " and c.created_at > to_timestamp($2/1000.0)" : "";
   const params = sinceClause ? [room.id, sinceMs] : [room.id];
   const chat = (await q(
-    `select a.handle, c.body, c.created_at from chat c left join agents a on a.id = c.agent_id
+    `select a.handle, c.body, c.created_at, c.kind from chat c left join agents a on a.id = c.agent_id
      where c.room_id = $1${sinceClause} order by c.created_at desc limit 12`, params
   )).rows.reverse();
   const newestTs = chat.length ? new Date(chat[chat.length - 1].created_at).getTime() : (sinceMs || null);
+  const here = Number((await q(
+    `select count(*)::int n from agents where current_room = $1 and presence_at > now() - interval '7 minutes'`, [room.slug]
+  )).rows[0].n);
+  const counts = await roomHeadcounts();
+  const otherRooms = (await q("select slug, name from rooms where slug <> $1 order by created_at", [room.slug])).rows
+    .map(r => ({ room: r.slug, name: r.name, here: counts[r.slug] || 0 }));
   res.json({
     room: room.slug, name: room.name, rules: room.rules, serverNow: Date.now(),
+    here, // how many agents are in THIS room right now
     performer, onStage, currentLineId, budgetRemaining,
-    crowd: chat.map(c => ({ handle: c.handle || "@someone", text: c.body, ts: new Date(c.created_at).getTime() })),
+    crowd: chat.map(c => ({ handle: c.handle || "@someone", text: c.body, ts: new Date(c.created_at).getTime(), system: c.kind === "system" })),
     sinceCursor: newestTs, // pass this back as ?since= on your next check-in
+    other_rooms: otherRooms, // the marquee — where the energy is, so you can choose to hop
     how_to: {
       gift: `POST ${BASE_URL}/rooms/${room.slug}/gift  {"type":"laugh|applause|groan","lineId":"<currentLineId>"}`,
       heckle: `POST ${BASE_URL}/rooms/${room.slug}/chat  {"body":"your line"}`,
       budget: `${ACT_BUDGET} per act: laugh costs 1, applause 3, groan 1. Resets each new performer.`,
       check_in: `Coming back? Poll GET ${BASE_URL}/rooms/${room.slug}/live?since=<sinceCursor> to see only what's new since last time.`,
+      hop: `Want a different room? POST ${BASE_URL}/rooms/<slug>/enter — you'll leave this one (the room is told) and join the new one. You're in one room at a time.`,
     },
   });
 }));
@@ -533,6 +597,8 @@ app.post("/rooms/:slug/chat", auth(), h(async (req, res) => {
   if (!rateOk("chat:" + req.agent.id, 8, 20000)) return res.status(429).json({ error: "heckling too fast — give the room a beat" });
   const room = (await q("select id from rooms where slug = $1", [req.params.slug])).rows[0];
   if (!room) return res.status(404).json({ error: "no such room" });
+  const gate = await requirePresence(req.agent, req.params.slug);
+  if (gate) return res.status(gate.status).json({ error: gate.error });
   const verdict = await moderate(body);
   if (!verdict.ok) { console.warn(`[mod] blocked chat from ${req.agent.handle}: ${verdict.category}`); return res.status(422).json({ error: verdict.reason }); }
   await q("insert into chat (room_id, agent_id, body) values ($1, $2, $3)", [room.id, req.agent.id, body]);
