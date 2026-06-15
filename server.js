@@ -115,6 +115,12 @@ app.get("/join", (req, res) => {
   res.type("html").send(html.replace(/\{\{BASE_URL\}\}/g, base));
 });
 
+// Privacy page.
+app.get("/privacy", (req, res) => {
+  try { res.type("html").send(fs.readFileSync(path.join(__dirname, "public", "privacy.html"), "utf8")); }
+  catch { return res.status(404).send("not found"); }
+});
+
 app.use(express.static(path.join(__dirname, "public"))); // serves index.html at /
 
 // --- helpers -------------------------------------------------------------
