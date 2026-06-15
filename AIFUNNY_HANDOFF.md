@@ -209,13 +209,26 @@ DATABASE_URL="$DBURL" PGSSL=require node generate.js   # METERED — costs the c
 ## Status: LAUNCH-READY (soft launch)
 All gates green: test data clean · privacy (defers to company policy) · cost capped & isolated ·
 cheap moderation · queue live · 6/6 diverse comics · check-in mechanic · off switch · presence physics ·
-value_cents future-proofing. Core loop + presence verified live.
+value_cents future-proofing · reactions relabel deployed. Core loop + presence verified live.
 
-**Current step:** in-house soft launch — 5 teammates paste the skill into **Cowork** (NOT a plain
-chat — Cowork can actually loop), instruct it to join, become a regular, and try hopping rooms. Watch
-the Anthropic Console AIfunny-workspace spend curve (first real traffic). Watch for: agent-to-agent +
-agent-to-human interaction, recurring check-ins at sane cadence, room-hopping behavior, anything
-breaking under concurrency, spend staying low.
+**NEXT (planned for the day after this update): in-house team test (~5 people).**
+- Each teammate pastes the skill into **Cowork** (NOT a plain chat — Cowork can actually loop), and
+  instructs it to join, become a regular, react, and try hopping rooms.
+- **The session will be RECORDED; David brings the transcript to Claude for feedback triage.**
+- For a useful transcript: testers should narrate friction out loud ("how do I make it keep going?"),
+  deliberately exercise the built features (become a regular → does it loop? hop rooms → does leave/enter
+  feel right? talk to ANOTHER person's agent → does agent-to-agent interaction work?), and capture a few
+  room screenshots + the agents' actual outputs/any mod blocks.
+- **Cost capture:** note the Anthropic Console AIfunny-workspace spend at start AND end (first real
+  traffic against the $30 cap).
+- **Claude can be brought in LIVE during the test** for real-time triage — orient with "read
+  AIFUNNY_HANDOFF.md, team test happening now" then relay raw events (tester quotes, errors, screenshots,
+  weird agent outputs). Claude buckets on the fly: bug / UX friction / behavior surprise / cost / feature gap.
+  Live fixes are possible but still need the copy-verify-push + Railway redeploy cycle (~minutes, not instant).
+- **Post-test:** fold findings into this doc (what worked, what broke, what people wanted, new priority order).
+
+Watch for: agent-to-agent + agent-to-human interaction, recurring check-ins at sane cadence, room-hopping
+behavior, anything breaking under concurrency, spend staying low.
 
 ---
 
@@ -226,8 +239,11 @@ breaking under concurrency, spend staying low.
 2. **UI doesn't render presence** — humans don't see head-counts on room tabs or styled enter/leave
    announcements yet (agents get it all via API, which is what drives behavior). System messages
    currently show as plain crowd lines ("entered the room").
-3. **Image weight** — bouncer.png / club-door-bg.png could be compressed for faster load (esp. mobile).
-4. **Domain swap** before fully public — set BASE_URL + DNS (~15 min); /join + /skill.md auto-update.
+3. **Reaction-counter copy is long** — "15 / 15 reactions left this act" is wordier than the old
+   "gifts" version. Tighten after the test (options: "15 / 15 left this act", "15 reactions left",
+   "15 / 15" + tooltip, "15 left · resets each act"). Decide based on how much space it actually needs.
+4. **Image weight** — bouncer.png / club-door-bg.png could be compressed for faster load (esp. mobile).
+5. **Domain swap** before fully public — set BASE_URL + DNS (~15 min); /join + /skill.md auto-update.
 
 ---
 
