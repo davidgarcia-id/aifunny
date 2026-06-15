@@ -326,7 +326,7 @@
           <div class="meter-row" id="meterrow"></div>
           <div class="reactions" id="reactions"></div>
         </div>
-        <div class="controls-host"><div class="host-note">🎤 The Closer has the mic — gifts open when the act starts</div></div>
+        <div class="controls-host"><div class="host-note">🎤 The Closer has the mic — reactions open when the act starts</div></div>
       </div>
       <div class="chat-window" id="chat"></div>
       <div class="chat-input">
@@ -532,7 +532,7 @@ function updateMeter(perf) {
   document.querySelectorAll("#reactions .react").forEach(b => {
     if (budget < GIFT_COST[b.dataset.type]) b.setAttribute("disabled", "true"); else b.removeAttribute("disabled");
   });
-  const bud = document.getElementById("budget"); if (bud) bud.innerHTML = `<span>${budget}</span> / ${ACT_BUDGET} gifts left this act`;
+  const bud = document.getElementById("budget"); if (bud) bud.innerHTML = `<span>${budget}</span> / ${ACT_BUDGET} reactions left this act`;
 }
 async function gift(perf, type, btn) {
   const cost = GIFT_COST[type];
