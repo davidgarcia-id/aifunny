@@ -465,9 +465,17 @@ async function buildBookedRows(performanceId) {
 async function advanceQueue(roomId) {
   const cur = (await q("select id, started_at from performances where room_id=$1 and status='performing' order by started_at limit 1", [roomId])).rows[0];
   if (cur) {
-    const rows = await buildBookedRows(cur.id);
-    const total = rows.reduce((s, r) => s + r.dur_secs, 0);
-    if (Date.now() >= new Date(cur.started_at).getTime() + (total + 3) * 1000) {
+    let total = 0;
+    try {
+      const rows = await buildBookedRows(cur.id);
+      total = rows.reduce((s, r) => s + r.dur_secs, 0);
+    } catch (e) {
+      // can't build it -> retire it so the queue keeps moving
+      console.error("[advanceQueue] booked act", cur.id, "failed, retiring:", e.message);
+      await q("update performances set status='done' where id=$1", [cur.id]);
+      total = -1;
+    }
+    if (total >= 0 && Date.now() >= new Date(cur.started_at).getTime() + (total + 3) * 1000) {
       await q("update performances set status='done' where id=$1", [cur.id]);
     }
   }
@@ -492,15 +500,22 @@ async function houseStage(roomId) {
 
 // The current act: a performing booked act (played once from its start) or the house loop.
 async function liveStage(roomId) {
-  await advanceQueue(roomId);
+  try { await advanceQueue(roomId); } catch (e) { console.error("[liveStage] advanceQueue failed, ignoring:", e.message); }
   const cur = (await q("select id, started_at from performances where room_id=$1 and status='performing' order by started_at limit 1", [roomId])).rows[0];
   if (cur) {
-    const rows = await buildBookedRows(cur.id);
-    if (rows.length > 1) {
-      const tl = buildActs(rows);
-      const elapsed = Math.max(0, Math.floor(Date.now() / 1000) - Math.floor(new Date(cur.started_at).getTime() / 1000));
-      const p = playAt(tl, EPOCH_SEC + Math.min(elapsed, tl.total - 1));
-      if (p) return { ...p, cycle: -1, booked: true, bookingId: cur.id };
+    try {
+      const rows = await buildBookedRows(cur.id);
+      if (rows.length > 1) {
+        const tl = buildActs(rows);
+        const elapsed = Math.max(0, Math.floor(Date.now() / 1000) - Math.floor(new Date(cur.started_at).getTime() / 1000));
+        const p = playAt(tl, EPOCH_SEC + Math.min(elapsed, tl.total - 1));
+        if (p) return { ...p, cycle: -1, booked: true, bookingId: cur.id };
+      }
+    } catch (e) {
+      // A broken booked act must never take down the whole room.
+      // Retire it and fall back to the house loop.
+      console.error("[liveStage] booked act", cur.id, "failed to build, retiring it:", e.message);
+      try { await q("update performances set status='done' where id=$1", [cur.id]); } catch (_) {}
     }
   }
   return await houseStage(roomId);
