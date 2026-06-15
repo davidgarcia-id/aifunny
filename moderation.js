@@ -52,7 +52,34 @@ function deterministic(text) {
   return { ok: true };
 }
 
-// --- Layer 2: context-aware LLM classifier --------------------------------
+// --- Layer 1.5: free risk triage ------------------------------------------
+// Most heckles are obviously benign and don't need a paid LLM call. This flags
+// only messages with signals that warrant contextual review — everything the
+// deterministic floor can't adjudicate but that *might* be a problem. Benign
+// comedy scores 0 and is cleared for free; only flagged messages hit the LLM.
+// Tunable: widen the lists to escalate more (safer, costlier), trim to escalate
+// less (cheaper, leans harder on the floor).
+const RISK = {
+  // sexual language without a minor term — floor only blocks minor+sexual co-occurrence,
+  // so explicit adult content still needs the LLM to judge.
+  sexual: SEXUAL,
+  // violence / threats / incitement the floor doesn't cover.
+  violence: /\b(kill|murder|shoot|stab|bomb|behead|lynch|execute|massacre|slaughter|die|death|hang|strangle|assault|attack|threat|hunt down|come for you|hurt you)\b/,
+  // protected-group / identity terms — contextual hate a slur list misses
+  // (e.g. dehumanizing language aimed at a group without using a slur).
+  identity: /\b(jew|jewish|muslim|islam|christian|black|white|asian|latino|hispanic|mexican|arab|immigrant|gay|lesbian|trans|transgender|disabled|women|men|race|religion|ethnic)\b/,
+  // targeted aggression at a specific handle/person
+  targeted: /(@\w+.{0,40}\b(suck|hate|stupid|idiot|trash|garbage|loser|worthless|ugly|disgusting|kys|kill)\b|\byou (?:are|'re|r)\b.{0,20}\b(stupid|idiot|trash|worthless|ugly|disgusting)\b)/,
+  // doxxing-ish: phone, address, email patterns
+  doxx: /(\b\d{3}[-.\s]?\d{3}[-.\s]?\d{4}\b|\b\d{1,5}\s+\w+\s+(?:st|street|ave|avenue|rd|road|blvd|lane|ln|dr|drive)\b|\b[\w.+-]+@[\w-]+\.[a-z]{2,}\b)/i,
+};
+// returns the list of triggered categories (empty = benign, no LLM needed)
+function riskFlags(text) {
+  const b = normalizeBase(text);
+  const flags = [];
+  for (const [name, re] of Object.entries(RISK)) if (re.test(b)) flags.push(name);
+  return flags;
+}
 async function llm(text) {
   const system = "You are a strict content moderator for a public comedy app where AI agents tell jokes and heckle. Return ONLY JSON.";
   const user =
@@ -82,11 +109,20 @@ MESSAGE: ${JSON.stringify(String(text).slice(0, 1000))}`;
 }
 
 // --- public API -----------------------------------------------------------
+// Tiered to minimize cost:
+//   1. deterministic floor — free, always — hard-blocks slurs & minor-safety.
+//   2. risk triage — free, always — benign comedy clears here with NO API call.
+//   3. LLM — paid, only for messages that tripped a risk flag (or are very long).
+// Set MODERATION_LLM_ALWAYS=true to force every message through the LLM (old behavior).
 async function moderate(text) {
   const floor = deterministic(text);
-  if (!floor.ok) return floor;            // hard categories: never reaches the LLM or the room
-  if (LLM_ON) return await llm(text);
-  return { ok: true };
+  if (!floor.ok) return floor;                 // hard categories: never reaches LLM or room
+  if (!LLM_ON) return { ok: true };            // LLM disabled: floor-only
+  const always = process.env.MODERATION_LLM_ALWAYS === "true";
+  const flags = riskFlags(text);
+  const longish = String(text || "").length > 240;
+  if (always || flags.length || longish) return await llm(text);
+  return { ok: true };                         // benign: cleared free, no API call
 }
 
 // --- rate limiting (in-memory sliding window, per key) --------------------
@@ -100,4 +136,4 @@ function rateOk(key, max = 8, windowMs = 20000) {
   return true;
 }
 
-module.exports = { moderate, deterministic, normalize, despace, rateOk, LLM_ON };
+module.exports = { moderate, deterministic, riskFlags, normalize, despace, rateOk, LLM_ON };
