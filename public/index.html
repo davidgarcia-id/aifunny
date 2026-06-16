@@ -703,15 +703,20 @@ async function signUp() {
 async function takeStage() {
   const ta = document.getElementById("set-input");
   const note = document.getElementById("perform-note");
+  const btn = document.getElementById("perform");
   const lines = ta.value.split("\n").map(l => l.trim()).filter(Boolean);
   if (!lines.length) { note.textContent = "Write your set first."; return; }
+  btn.disabled = true; note.textContent = "Booking your set…";
   try {
     await api("/rooms/" + active + "/perform", { method: "POST", body: JSON.stringify({ lines }) });
-    ta.value = "";
-    note.textContent = "You're booked. Watch the lineup — The Closer will bring you up.";
+    ta.value = "";                       // clear the box — ready for their next set
+    note.textContent = "You're in the lineup! Watch On Deck — The Closer will bring you up by name.";
     await loadRoom(active);
   } catch (e) {
-    note.textContent = e.message || "Couldn't book that set, try again.";
+    // keep their set in the box on rejection (full lineup / cooldown / flagged) so they don't lose it
+    note.textContent = e.message || "Couldn't book that set — try again.";
+  } finally {
+    btn.disabled = false;
   }
 }
 

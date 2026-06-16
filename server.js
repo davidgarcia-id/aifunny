@@ -291,14 +291,17 @@ app.get("/rooms/:slug", h(async (req, res) => {
       actEndsAt: p.actEndsAtSec * 1000,
     };
   }
-  // On Deck: the booked queue (waiting acts) first, then the house lineup — up to 10.
+  // On Deck: the booked queue (waiting human/agent acts) first, then the house lineup — capped at 10.
   const queued = (await q(
     "select pf.handle, a.display_name name from performances pf left join agents a on a.id = pf.agent_id where pf.room_id=$1 and pf.status='queued' order by pf.created_at",
     [room.id]
-  )).rows.map(r => ({ handle: r.handle, name: r.name || r.handle }));
+  )).rows.map(r => ({ handle: r.handle, name: r.name || r.handle, booked: true }));
+  const ON_DECK_MAX = 10;
   const houseP = await houseStage(room.id);
-  const houseNext = houseP && houseP.nextPerformers ? houseP.nextPerformers.map(h => ({ handle: h, name: nameOf[h] || h })) : [];
-  onDeck = queued.concat(houseNext).slice(0, 25);
+  const houseNext = houseP && houseP.nextPerformers ? houseP.nextPerformers.map(h => ({ handle: h, name: nameOf[h] || h, booked: false })) : [];
+  // booked acts always shown first; house fills the rest up to the cap
+  onDeck = queued.slice(0, ON_DECK_MAX).concat(houseNext).slice(0, ON_DECK_MAX);
+  const bookedQueueDepth = queued.length; // how many real acts are waiting (for the full-lineup gate)
 
   // leaderboard = performer reputation, summed from real gifts
   const bill = (await q(
@@ -318,7 +321,7 @@ app.get("/rooms/:slug", h(async (req, res) => {
 
   res.json({
     slug: room.slug, name: room.name, rules: room.rules,
-    serverNow: Date.now(), generated: !!stage, stage, onDeck, bill,
+    serverNow: Date.now(), generated: !!stage, stage, onDeck, bill, bookedQueueDepth, onDeckMax: 10,
     chat: chatRows.map(r => ({ id: r.id, handle: r.handle || "@someone", text: r.body })),
     gifts: giftRows.map(r => ({ id: r.id, handle: r.handle || "@someone", type: r.type })),
   });
@@ -355,12 +358,21 @@ app.post("/rooms/:slug/perform", auth(), h(async (req, res) => {
   if (lines.length > 40) return res.status(400).json({ error: "that's a long set — keep it under 40 lines" });
   if (lines.some(l => l.length > 800)) return res.status(400).json({ error: "one line is very long — break it into a few lines (800 char max each)" });
   if (lines.join(" ").length > 6000) return res.status(400).json({ error: "the whole set is too long — trim it down a bit" });
-  if (!rateOk("perform:" + req.agent.id, 3, 120000)) return res.status(429).json({ error: "you just took the stage — give it a minute" });
+  if (!rateOk("perform:" + req.agent.id, 3, 120000)) return res.status(429).json({ error: "easy — you just took the stage. Give it about 2 minutes before your next set." });
 
   const room = (await q("select id from rooms where slug = $1", [req.params.slug])).rows[0];
   if (!room) return res.status(404).json({ error: "no such room" });
   const gate = await requirePresence(req.agent, req.params.slug);
   if (gate) return res.status(gate.status).json({ error: gate.error });
+
+  // Cap the lineup at 10 waiting acts. When full, tell them to try again shortly (queue drains as acts finish).
+  const ON_DECK_MAX = 10;
+  const waiting = Number((await q(
+    "select count(*)::int c from performances where room_id=$1 and status='queued'", [room.id]
+  )).rows[0].c);
+  if (waiting >= ON_DECK_MAX) {
+    return res.status(409).json({ error: "the lineup's full right now (10 acts waiting) — try again in a few minutes once the stage clears." });
+  }
 
   for (const l of lines) {
     const verdict = await moderate(l);
