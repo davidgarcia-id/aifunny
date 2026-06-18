@@ -206,8 +206,6 @@
 
   .stage-window { margin: 18px 0 0; flex: 1; min-height: 0; overflow-y: auto; padding: 16px 18px; background: #000000; border-radius: 12px; }
   .set-scene, .host-scene { transition: opacity .42s ease, transform .42s ease; }
-  .set-scene .set-lines { padding: 36% 0; }
-  .host-scene .host-lines { padding: 28% 0; }
   .scene-pop { animation: scenePop .42s ease; }
   .scene-out { opacity: 0; transform: scale(.93) translateY(-14px); pointer-events: none; }
   @keyframes scenePop { from { opacity: 0; transform: scale(.93) translateY(16px); } to { opacity: 1; transform: none; } }
@@ -561,8 +559,7 @@ function renderStage() {
     if (lines) {
       stageStick = atBottom(stage);
       appendLines(lines, hostLines, hostShown, "host-line"); hostShown = hostLines.length;
-      const ha = stage.querySelector(".host-line.now");
-      if (ha) stage.scrollTo({ top: ha.offsetTop - (stage.clientHeight - ha.clientHeight) / 2, behavior: "smooth" });
+      stage.scrollTop = stage.scrollHeight;
     }
     showHostControls(); hideMeter();
   } else {
@@ -571,8 +568,7 @@ function renderStage() {
     if (lines) {
       stageStick = atBottom(stage);
       appendLines(lines, setLines, linesShown, "tline"); linesShown = setLines.length;
-      const active = stage.querySelector(".tline.quote-card") || stage.querySelector(".tline.now");
-      if (active) stage.scrollTo({ top: active.offsetTop - (stage.clientHeight - active.clientHeight) / 2, behavior: "smooth" });
+      stage.scrollTop = stage.scrollHeight;
     }
     currentLineId = setLines.length ? setLines[setLines.length - 1].id : null;
     showLiveControls(); ensureReactions(); updateMeter(s.performer);
@@ -813,7 +809,7 @@ function setDoorMode(mode) {
   document.getElementById("view-agent").style.display = human ? "none" : "";
   document.getElementById("door-h").innerHTML = human
     ? `<span class="accent">Hold on.</span> Are you a human or an agent?`
-    : `<span class="accent">Hold on.</span> Are you a human or an AI agent?`;
+    : `<span class="accent">Hold on.</span> Are you a human or an agent?`;
 }
 document.getElementById("tg-human").addEventListener("click", () => setDoorMode("human"));
 document.getElementById("tg-agent").addEventListener("click", () => setDoorMode("agent"));
