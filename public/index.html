@@ -143,16 +143,24 @@
   .next-on { font-family: var(--body); font-size: 16px; color: var(--surface); margin-top: 12px; }
   .next-on .who { color: var(--accent); font-weight: 600; }
 
-  /* ---------- 3-col club: feed LEFT, stage CENTER, leaderboard RIGHT ---------- */
+  /* ---------- 2-col page: ROOM (feed+stage) LEFT, info/share RIGHT ---------- */
   .club {
-    display: grid; grid-template-columns: 360px minmax(0, 1fr) 320px; gap: 20px;
+    display: grid; grid-template-columns: minmax(0, 1fr) 320px; gap: 20px;
     max-width: 1340px; margin: 0 auto; padding: 0 20px 48px; align-items: start;
   }
+  /* the Room: one bordered unit holding the feed and the stage, split by an interior divider */
+  .room {
+    display: grid; grid-template-columns: 360px minmax(0, 1fr);
+    background: var(--ink); border: 1px solid var(--accent); border-radius: 18px; overflow: hidden;
+  }
+  .room .feed-col { border-right: 2px solid var(--line); display: flex; flex-direction: column; min-height: 600px; }
+  .room .stage-col { min-width: 0; }
+  @media (max-width: 760px) { .room { grid-template-columns: 1fr; } .room .feed-col { border-right: 0; border-top: 2px solid var(--line); order: 2; } }
   .col-right { display: flex; flex-direction: column; gap: 20px; position: sticky; top: 14px; }
   .panel { background: var(--ink-2); border: 1px solid var(--accent); border-radius: 18px; padding: 20px; }
 
-  /* ---- left: feed + heckle ---- */
-  .feed-panel { background: var(--ink-2); border: 1px solid var(--accent); border-radius: 18px; padding: 18px 18px 0; display: flex; flex-direction: column; min-height: 600px; }
+  /* ---- feed component (interior of the Room, left) ---- */
+  .feed-panel { background: transparent; padding: 18px 18px 0; display: flex; flex-direction: column; flex: 1; min-height: 0; }
   .chat-window { flex: 1; overflow-y: auto; max-height: 560px; padding-right: 4px; }
   .chat-msg { margin: 0 0 16px; }
   .chat-who { display: flex; align-items: center; gap: 7px; font-family: var(--body); font-weight: 600; font-size: 13px; color: var(--accent); }
@@ -164,7 +172,7 @@
   .gift-evt .chat-who { color: var(--accent); font-weight: 600; }
   .gift-evt .gift-act { color: var(--text-tertiary); }
   .gift-evt .giftn { font-family: var(--mono); font-size: 12px; color: var(--accent); font-weight: 700; }
-  .heckle-bar { padding: 16px; margin: 0 -18px; background: var(--ink-2); border-top: 1px solid var(--line); }
+  .heckle-bar { padding: 16px; margin: 0 -18px; background: var(--ink-2); border-top: 2px solid var(--line); }
   .heckle-bar input { width: 100%; background: #0a0806; color: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 13px 16px; font-family: var(--body); font-size: 14px; }
   .heckle-bar input:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 2px rgba(244,161,56,0.3); }
   .heckle-bar input::placeholder { color: var(--text-tertiary); }
@@ -177,9 +185,9 @@
   .btn:hover { filter: brightness(1.06); }
   .btn[disabled] { opacity: 0.4; cursor: not-allowed; }
 
-  /* ---- center: stage card ---- */
+  /* ---- stage component (interior of the Room, right) ---- */
   .col-center { display: flex; flex-direction: column; gap: 0; }
-  .stage-card { background: var(--ink); border: 1px solid var(--accent); border-radius: 18px; padding: 22px 24px; }
+  .stage-card { background: transparent; border: 0; border-radius: 0; padding: 22px 24px; }
   .perf-head { display: flex; align-items: center; gap: 14px; }
   .perf-av { width: 64px; height: 64px; flex: 0 0 auto; }
   .perf-id { flex: 1 1 auto; min-width: 0; }
@@ -187,10 +195,9 @@
   .perf-live { font-family: var(--body); font-size: 14px; color: var(--green); margin-left: 14px; display: inline-flex; align-items: center; gap: 6px; }
   .perf-live .dot { width: 9px; height: 9px; border-radius: 50%; background: var(--green); box-shadow: 0 0 8px var(--green); }
   .perf-handle { font-family: var(--body); font-size: 14px; color: var(--text-tertiary); margin-top: 5px; }
-  .perf-head { padding-bottom: 16px; border-bottom: 2px solid var(--line); }
 
   /* set meter */
-  .meter-row { display: flex; align-items: center; gap: 14px; margin: 16px 0 0; }
+  .meter-row { display: flex; align-items: center; gap: 14px; margin: 16px 0 0; padding-bottom: 18px; border-bottom: 2px solid var(--line); }
   .meter-label { font-family: var(--grot); font-weight: 700; font-size: 16px; color: var(--surface); flex: 0 0 auto; }
   .meter { flex: 1; height: 8px; background: var(--accent-3); border-radius: 40px; overflow: hidden; }
   .meter-fill { height: 100%; background: linear-gradient(90deg, #9a0707, #954000 37%, #f1870a 71%, #f7a83a); border-radius: 40px; transition: width .4s; }
@@ -243,7 +250,7 @@
   .budget span { color: var(--surface); font-weight: 700; }
 
   /* take the stage */
-  .take-stage { margin: 22px -24px -22px; padding: 22px 24px; background: var(--ink-2); border-top: 2px solid var(--line); border-radius: 0 0 18px 18px; }
+  .take-stage { margin: 22px -24px -22px; padding: 22px 24px; background: var(--ink-2); border-top: 2px solid var(--line); }
   .take-stage h3 { font-family: var(--display); font-size: 20px; color: var(--surface); margin: 0 0 12px; display: flex; align-items: center; gap: 8px; }
   .take-stage textarea {
     width: 100%; min-height: 96px; resize: vertical; background: #0a0806; color: var(--surface);
@@ -299,9 +306,6 @@
   @media (max-width: 1040px) {
     .club { grid-template-columns: 1fr; gap: 16px; }
     .col-right { position: static; }
-    .col-center { order: -1; }
-    .col-right { order: 1; }
-    .col-left { order: 2; }
   }
 </style>
 </head>
@@ -358,43 +362,46 @@
     <div class="next-on" id="next-on"></div>
   </div>
 
-  <!-- 3 columns: feed | stage | leaderboard+invite -->
+  <!-- 2 columns: ROOM (feed + stage) | info/share -->
   <main class="club">
-    <!-- LEFT: feed + heckle -->
-    <aside class="col-left">
-      <div class="feed-panel">
-        <div class="chat-window" id="chat"></div>
-        <div class="heckle-bar">
-          <input id="chat-text" placeholder="Give props, heckle, laugh, or just chat." aria-label="Your heckle" />
-          <button class="btn" id="comment">Comment</button>
-        </div>
-      </div>
-    </aside>
-
-    <!-- CENTER: the stage -->
-    <section class="col-center">
-      <div class="stage-card">
-        <div id="stage-performer"></div>
-        <div class="meter-row" id="meterrow-wrap" style="display:none">
-          <span class="meter-label">Set Meter</span>
-          <div class="meter"><div class="meter-fill" id="set-meter-fill" style="width:0%"></div></div>
-          <span class="meter-score" id="set-meter-score">0</span>
-        </div>
-        <div class="stage-window" id="stage" aria-live="polite"></div>
-        <div class="stage-controls" id="stage-controls">
-          <div class="controls-live">
-            <div class="reactions" id="reactions"></div>
+    <!-- LEFT COLUMN: the Room — one bordered unit, feed | stage -->
+    <div class="room">
+      <!-- feed component -->
+      <aside class="feed-col col-left">
+        <div class="feed-panel">
+          <div class="chat-window" id="chat"></div>
+          <div class="heckle-bar">
+            <input id="chat-text" placeholder="Give props, heckle, laugh, or just chat." aria-label="Your heckle" />
+            <button class="btn" id="comment">Comment</button>
           </div>
-          <div class="controls-host"><div class="host-note">🎤 The Closer has the mic. Reactions open when the act starts</div></div>
         </div>
-        <div class="take-stage" id="stage-entry">
-          <h3>🎤 Take the Stage</h3>
-          <div id="stage-entry-body"></div>
-        </div>
-      </div>
-    </section>
+      </aside>
 
-    <!-- RIGHT: leaderboard + invite -->
+      <!-- stage component -->
+      <section class="stage-col col-center">
+        <div class="stage-card">
+          <div id="stage-performer"></div>
+          <div class="meter-row" id="meterrow-wrap" style="display:none">
+            <span class="meter-label">Set Meter</span>
+            <div class="meter"><div class="meter-fill" id="set-meter-fill" style="width:0%"></div></div>
+            <span class="meter-score" id="set-meter-score">0</span>
+          </div>
+          <div class="stage-window" id="stage" aria-live="polite"></div>
+          <div class="stage-controls" id="stage-controls">
+            <div class="controls-live">
+              <div class="reactions" id="reactions"></div>
+            </div>
+            <div class="controls-host"><div class="host-note">🎤 The Closer has the mic. Reactions open when the act starts</div></div>
+          </div>
+          <div class="take-stage" id="stage-entry">
+            <h3>🎤 Take the Stage</h3>
+            <div id="stage-entry-body"></div>
+          </div>
+        </div>
+      </section>
+    </div>
+
+    <!-- RIGHT COLUMN: info / share -->
     <aside class="col-right">
       <section class="panel">
         <h2><span class="crown">👑</span> Leader Board</h2>
