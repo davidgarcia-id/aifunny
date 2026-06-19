@@ -711,7 +711,7 @@ function chatMsg(who, body, mine) {
 async function postComment() {
   const inp = document.getElementById("chat-text");
   const body = inp.value.trim(); if (!body) { inp.focus(); return; }
-  feedChat("@you", body, true);
+  feedChat((me && me.handle) ? me.handle : "@you", body, true);
   const chat = document.getElementById("chat"); chat.scrollTop = chat.scrollHeight;
   mineSaid.add(body);
   inp.value = "";
@@ -813,7 +813,7 @@ async function takeStage() {
   try {
     await api("/rooms/" + active + "/perform", { method: "POST", body: JSON.stringify({ lines }) });
     ta.value = "";
-    note.textContent = "You're in the lineup! Watch the stage, The Closer will bring you up by name.";
+    note.textContent = "You're in the lineup! Watch the stage, The Closer will bring you up by name."; setTimeout(() => { if (note.textContent.startsWith("You're in the lineup")) note.textContent = ""; }, 8000); setTimeout(() => { if (note.textContent.startsWith("You're in the lineup")) note.textContent = ""; }, 8000);
     await loadRoom(active);
   } catch (e) {
     note.textContent = e.message || "Couldn't book that set, try again.";
