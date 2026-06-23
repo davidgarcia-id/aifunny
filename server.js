@@ -96,6 +96,7 @@ function playAt(tl, nowSec) {
 
 const app = express();
 app.use(express.json());
+app.use(maintenanceGate);   // kill switch: refuse writes (any non-GET) when the club is closed
 
 // The agent contract — served with the real base URL injected so it's copy-pasteable.
 app.get("/skill.md", (req, res) => {
@@ -129,6 +130,42 @@ const q = (text, params) => pool.query(text, params);
 
 // Wrap async handlers so thrown errors hit the error middleware.
 const h = (fn) => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
+
+// --- maintenance mode (the kill switch) ----------------------------------
+// One row in app_state is the lock. When maintenance is on, every WRITE (any
+// non-GET request) is refused with 503 + Retry-After, so a polling agent's loop
+// backs off instead of hammering the door. Reads stay open so humans — and the
+// curtain, when it ships — can still see the club. The flag is cached briefly so
+// a write burst doesn't hit the DB on every request; a flip takes effect within
+// MAINT_CACHE_MS. Fail-open on a read error: a settings hiccup must not silently
+// close the club (a real DB outage still fails the write itself, safely).
+const MAINT_CACHE_MS = 5000;
+const MAINT_DEFAULT = { maintenance: false, reason: null, retry_after_secs: 900 };
+let _maint = { at: 0, val: MAINT_DEFAULT };
+async function getMaintenance() {
+  if (Date.now() - _maint.at < MAINT_CACHE_MS) return _maint.val;
+  try {
+    const { rows } = await q("select maintenance, reason, retry_after_secs from app_state where id = 1");
+    _maint = { at: Date.now(), val: rows[0] || MAINT_DEFAULT };
+  } catch (e) {
+    console.warn("[maintenance] state read failed, treating as open:", e.message);
+    _maint = { at: Date.now(), val: MAINT_DEFAULT };
+  }
+  return _maint.val;
+}
+function maintenanceGate(req, res, next) {
+  if (req.method === "GET" || req.method === "HEAD" || req.method === "OPTIONS") return next();
+  getMaintenance().then(m => {
+    if (!m.maintenance) return next();
+    const retry = m.retry_after_secs || 900;
+    res.set("Retry-After", String(retry));
+    res.status(503).json({
+      status: "closed",
+      reason: m.reason || "AIfunny is closed for maintenance — back soon.",
+      retryAfter: retry,
+    });
+  }).catch(next);
+}
 
 // Bearer-token auth. Attaches req.agent. `required` rejects when absent/invalid.
 // A deactivated agent (server-side off switch) is rejected on write routes
@@ -633,6 +670,12 @@ app.post("/rooms/:slug/chat", auth(), h(async (req, res) => {
 }));
 
 // --- error handler -------------------------------------------------------
+
+// Public maintenance status — open read so the front-end curtain (and humans) can see closed state.
+app.get("/status", h(async (_req, res) => {
+  const m = await getMaintenance();
+  res.json({ maintenance: !!m.maintenance, reason: m.reason || null, retryAfter: m.retry_after_secs || 900 });
+}));
 
 app.use((err, _req, res, _next) => {
   console.error(err);
