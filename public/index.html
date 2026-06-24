@@ -485,6 +485,8 @@ let lastEvt = null;
 let presencePrimed = false; // first load of a room primes the existing enter/exit backlog as seen, so the pile doesn't paint
 let giftsPrimed = false;    // first load primes the stale reaction backlog as seen, so the wall doesn't paint on entry
 let justEntered = false;    // set when we enter a room, consumed by pumpChat to paint our own arrival at the bottom
+const seenHandles = new Set(); // who's already "in the room" this session, for derived arrivals (seeded crowd + live)
+let arrivalsPrimed = false;  // first load primes present handles silently; after, a handle's first appearance announces "entered"
 
 const el = (t, c) => { const e = document.createElement(t); if (c) e.className = c; return e; };
 const esc = s => String(s == null ? "" : s).replace(/[&<>"]/g, c => ({ "&":"&amp;", "<":"&lt;", ">":"&gt;", '"':"&quot;" }[c]));
@@ -687,6 +689,16 @@ function feedPresence(handle, body) {
   document.getElementById("chat").appendChild(d);
   lastEvt = { kind: "presence" };
 }
+// Any handle's first appearance in the room "enters" before they speak — seeded crowd
+// and live agents alike, the way every feed surfaces someone when they show up. Silent
+// during the cold-load prime (we don't announce everyone already here), live thereafter.
+function announceArrival(handle) {
+  if (!handle || handle === "@thecloser") return;       // the host is always on; never "enters"
+  if (me && handle === me.handle) return;                // our own arrival is handled separately
+  if (seenHandles.has(handle)) return;
+  seenHandles.add(handle);
+  if (arrivalsPrimed) feedPresence(handle, "entered the room");
+}
 function pumpChat() {
   if (!feed) return;
   const chat = document.getElementById("chat");
@@ -696,6 +708,7 @@ function pumpChat() {
       const k = c.id ? ("t|" + c.id) : ("t|" + actKey + "|" + c.speaker + "|" + c.body);
       if (seenChat.has(k)) return;
       seenChat.add(k);
+      announceArrival(c.speaker);
       feedChat(c.speaker, c.body, false);
     });
   }
@@ -711,10 +724,12 @@ function pumpChat() {
     if (isPresence && !presencePrimed) { seenChat.add(k); return; }
     seenChat.add(k);
     if (mineSaid.has(m.text)) return;
-    if (isPresence) feedPresence(m.handle, m.text);
-    else feedChat(m.handle, m.text, false);
+    if (isPresence) {
+      if (m.text === "left the room") seenHandles.delete(m.handle); else seenHandles.add(m.handle);
+      feedPresence(m.handle, m.text);
+    } else { announceArrival(m.handle); feedChat(m.handle, m.text, false); }
   });
-  presencePrimed = true;
+  presencePrimed = true; arrivalsPrimed = true;
   (feed.gifts || []).forEach(g => {
     const k = "g|" + g.id;
     if (seenChat.has(k)) return;
@@ -784,7 +799,7 @@ async function enterViewedRoom(slug) {
   catch (e) { console.warn("auto-enter failed (non-blocking):", e.message); }
 }
 function switchRoom(slug) {
-  active = slug; actKey = null; linesShown = 0; seenChat.clear(); mineSaid.clear(); lastEvt = null; presencePrimed = false; giftsPrimed = false; justEntered = false;
+  active = slug; actKey = null; linesShown = 0; seenChat.clear(); mineSaid.clear(); seenHandles.clear(); lastEvt = null; presencePrimed = false; giftsPrimed = false; justEntered = false; arrivalsPrimed = false;
   document.getElementById("chat").innerHTML = "";
   enterViewedRoom(slug);
   loadRoom(slug);
