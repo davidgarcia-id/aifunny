@@ -179,6 +179,8 @@
   .gift-evt { display: flex; align-items: baseline; gap: 7px; font-size: 13px; margin: 0 0 12px; color: var(--text-tertiary); }
   .gift-evt .gift-ic { font-size: 15px; }
   .gift-evt .chat-who { color: var(--accent); font-weight: 600; }
+  .presence-evt { font-family: var(--body); font-size: 11px; color: #6f665a; text-align: center; margin: 6px 0; }
+  .presence-evt .pres-who { color: var(--accent); opacity: .75; font-weight: 600; }
   .gift-evt .gift-act { color: var(--text-tertiary); }
   .gift-evt .giftn { font-family: var(--mono); font-size: 12px; color: var(--accent); font-weight: 700; }
   .heckle-bar { padding: 16px; margin: 0 -18px; background: var(--ink-2); border-top: 2px solid var(--line); }
@@ -480,6 +482,7 @@ const GIFT_VERB   = { laugh: "laughed", applause: "applauded", groan: "groaned" 
 let budget = ACT_BUDGET;
 let currentLineId = null;
 let lastEvt = null;
+let presencePrimed = false; // first load of a room primes the existing enter/exit backlog as seen, so the pile doesn't paint
 
 const el = (t, c) => { const e = document.createElement(t); if (c) e.className = c; return e; };
 const esc = s => String(s == null ? "" : s).replace(/[&<>"]/g, c => ({ "&":"&amp;", "<":"&lt;", ">":"&gt;", '"':"&quot;" }[c]));
@@ -676,13 +679,19 @@ function feedGift(handle, type) {
   chat.appendChild(d);
   lastEvt = { kind: "gift", handle, type, n: 1, el: d };
 }
+function feedPresence(handle, body) {
+  const d = el("div", "presence-evt");
+  d.innerHTML = `<span class="pres-who">${esc(handle)}</span> ${esc(body)}`;
+  document.getElementById("chat").appendChild(d);
+  lastEvt = { kind: "presence" };
+}
 function pumpChat() {
   if (!feed) return;
   const chat = document.getElementById("chat");
   chatStick = atBottom(chat);
   if (feed.stage) {
     (feed.stage.transcript || []).filter(x => x.role === "crowd").forEach(c => {
-      const k = "t|" + actKey + "|" + c.speaker + "|" + c.body;
+      const k = c.id ? ("t|" + c.id) : ("t|" + actKey + "|" + c.speaker + "|" + c.body);
       if (seenChat.has(k)) return;
       seenChat.add(k);
       feedChat(c.speaker, c.body, false);
@@ -691,10 +700,17 @@ function pumpChat() {
   (feed.chat || []).forEach(m => {
     const k = "live|" + m.id;
     if (seenChat.has(k)) return;
+    const isPresence = m.kind === "system";
+    // First load of a room: prime the existing enter/exit backlog as seen so the old
+    // pile doesn't paint (and doesn't follow you between rooms). The conversation
+    // backlog still paints. After this first pump, new enter/exits paint live.
+    if (isPresence && !presencePrimed) { seenChat.add(k); return; }
     seenChat.add(k);
     if (mineSaid.has(m.text)) return;
-    feedChat(m.handle, m.text, false);
+    if (isPresence) feedPresence(m.handle, m.text);
+    else feedChat(m.handle, m.text, false);
   });
+  presencePrimed = true;
   (feed.gifts || []).forEach(g => {
     const k = "g|" + g.id;
     if (seenChat.has(k)) return;
@@ -759,7 +775,7 @@ async function enterViewedRoom(slug) {
   catch (e) { console.warn("auto-enter failed (non-blocking):", e.message); }
 }
 function switchRoom(slug) {
-  active = slug; actKey = null; linesShown = 0; seenChat.clear(); mineSaid.clear(); lastEvt = null;
+  active = slug; actKey = null; linesShown = 0; seenChat.clear(); mineSaid.clear(); lastEvt = null; presencePrimed = false;
   document.getElementById("chat").innerHTML = "";
   enterViewedRoom(slug);
   loadRoom(slug);

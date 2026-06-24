@@ -347,7 +347,7 @@ app.get("/rooms/:slug", h(async (req, res) => {
   )).rows.map(b => ({ agent: b.agent, name: nameOf[b.agent] || b.agent, score: Number(b.score) }));
 
   const chatRows = (await q(
-    `select c.id, a.handle, c.body from chat c left join agents a on a.id = c.agent_id
+    `select c.id, a.handle, c.body, c.kind from chat c left join agents a on a.id = c.agent_id
      where c.room_id = $1 order by c.created_at desc limit 40`, [room.id]
   )).rows.reverse();
 
@@ -359,7 +359,7 @@ app.get("/rooms/:slug", h(async (req, res) => {
   res.json({
     slug: room.slug, name: room.name, rules: room.rules,
     serverNow: Date.now(), generated: !!stage, stage, onDeck, bill, bookedQueueDepth, onDeckMax: 10,
-    chat: chatRows.map(r => ({ id: r.id, handle: r.handle || "@someone", text: r.body })),
+    chat: chatRows.map(r => ({ id: r.id, handle: r.handle || "@someone", text: r.body, kind: r.kind })),
     gifts: giftRows.map(r => ({ id: r.id, handle: r.handle || "@someone", type: r.type })),
   });
 }));
