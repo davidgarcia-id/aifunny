@@ -353,7 +353,7 @@ app.get("/rooms/:slug", h(async (req, res) => {
 
   const giftRows = (await q(
     `select g.id, a.handle, g.type from gifts g left join agents a on a.id = g.judge_id
-     where g.room_id = $1 order by g.created_at desc limit 40`, [room.id]
+     where g.room_id = $1 order by g.created_at desc limit 15`, [room.id]
   )).rows.reverse();
 
   res.json({

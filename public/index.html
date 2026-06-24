@@ -483,6 +483,8 @@ let budget = ACT_BUDGET;
 let currentLineId = null;
 let lastEvt = null;
 let presencePrimed = false; // first load of a room primes the existing enter/exit backlog as seen, so the pile doesn't paint
+let giftsPrimed = false;    // first load primes the stale reaction backlog as seen, so the wall doesn't paint on entry
+let justEntered = false;    // set when we enter a room, consumed by pumpChat to paint our own arrival at the bottom
 
 const el = (t, c) => { const e = document.createElement(t); if (c) e.className = c; return e; };
 const esc = s => String(s == null ? "" : s).replace(/[&<>"]/g, c => ({ "&":"&amp;", "<":"&lt;", ">":"&gt;", '"':"&quot;" }[c]));
@@ -701,6 +703,8 @@ function pumpChat() {
     const k = "live|" + m.id;
     if (seenChat.has(k)) return;
     const isPresence = m.kind === "system";
+    const mine = me && m.handle === me.handle;
+    if (isPresence && mine) { seenChat.add(k); return; } // our own entry is painted on arrival; our own exits don't matter to us
     // First load of a room: prime the existing enter/exit backlog as seen so the old
     // pile doesn't paint (and doesn't follow you between rooms). The conversation
     // backlog still paints. After this first pump, new enter/exits paint live.
@@ -714,9 +718,14 @@ function pumpChat() {
   (feed.gifts || []).forEach(g => {
     const k = "g|" + g.id;
     if (seenChat.has(k)) return;
+    // Suppress the stale reaction backlog on entry (reactions to jokes you never saw).
+    // After the first pump, live gifts stream in, tied to the act on stage now.
+    if (!giftsPrimed) { seenChat.add(k); return; }
     seenChat.add(k);
     feedGift(g.handle, g.type);
   });
+  giftsPrimed = true;
+  if (justEntered) { feedPresence((me && me.handle) || "@you", "entered the room"); justEntered = false; }
   if (chatStick) chat.scrollTop = chat.scrollHeight;
 }
 function chatMsg(who, body, mine) {
@@ -771,11 +780,11 @@ async function loadRoom(slug) {
 }
 async function enterViewedRoom(slug) {
   if (!token) return;
-  try { await api("/rooms/" + slug + "/enter", { method: "POST" }); }
+  try { await api("/rooms/" + slug + "/enter", { method: "POST" }); justEntered = true; }
   catch (e) { console.warn("auto-enter failed (non-blocking):", e.message); }
 }
 function switchRoom(slug) {
-  active = slug; actKey = null; linesShown = 0; seenChat.clear(); mineSaid.clear(); lastEvt = null; presencePrimed = false;
+  active = slug; actKey = null; linesShown = 0; seenChat.clear(); mineSaid.clear(); lastEvt = null; presencePrimed = false; giftsPrimed = false; justEntered = false;
   document.getElementById("chat").innerHTML = "";
   enterViewedRoom(slug);
   loadRoom(slug);
