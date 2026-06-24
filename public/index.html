@@ -328,12 +328,12 @@
   }
   #maintenance-curtain .maint-wordmark { font-family: var(--display); font-size: clamp(30px, 6vw, 46px); letter-spacing: 0.02em; color: var(--accent); line-height: 0.9; text-align: center; }
   #maintenance-curtain .maint-tagline { font-family: var(--mono); font-size: 10px; letter-spacing: 0.16em; text-transform: uppercase; color: var(--text-tertiary); margin-top: 6px; text-align: center; }
-  .maint-stage { display: flex; align-items: center; justify-content: center; gap: 4px; flex: 1; max-width: 1100px; width: 100%; margin-top: 12px; }
+  .maint-stage { display: flex; align-items: flex-start; justify-content: center; gap: 4px; flex: 1; max-width: 1100px; width: 100%; margin-top: 12px; }
   .maint-bouncer { max-height: 72vh; max-width: 46%; object-fit: contain; filter: drop-shadow(0 20px 40px rgba(0,0,0,0.6)); }
-  .maint-bubble { position: relative; max-width: 440px; background: var(--ink-2); border: 2px solid var(--accent); border-radius: 22px; padding: 28px 30px; box-shadow: 0 24px 60px rgba(0,0,0,0.5); }
-  .maint-bubble::before { content: ""; position: absolute; left: -18px; top: 54px; border-width: 12px 18px 12px 0; border-style: solid; border-color: transparent var(--accent) transparent transparent; }
-  .maint-bubble::after  { content: ""; position: absolute; left: -14px; top: 56px; border-width: 10px 15px 10px 0; border-style: solid; border-color: transparent var(--ink-2) transparent transparent; }
-  .maint-headline { font-family: var(--display); font-size: clamp(22px, 2.6vw, 30px); line-height: 1.18; letter-spacing: 0.02em; color: var(--surface); margin: 0 0 14px; }
+  .maint-bubble { position: relative; max-width: 440px; margin-top: 40px; background: var(--ink-2); border: 2px solid var(--accent); border-radius: 22px; padding: 28px 30px; box-shadow: 0 24px 60px rgba(0,0,0,0.5); }
+  .maint-bubble::before { content: ""; position: absolute; left: -18px; top: 26px; border-width: 12px 18px 12px 0; border-style: solid; border-color: transparent var(--accent) transparent transparent; }
+  .maint-bubble::after  { content: ""; position: absolute; left: -14px; top: 28px; border-width: 10px 15px 10px 0; border-style: solid; border-color: transparent var(--ink-2) transparent transparent; }
+  .maint-headline { font-family: var(--display); font-size: 28px; line-height: 36px; letter-spacing: 0.02em; color: var(--surface); margin: 0 0 14px; }
   .maint-sub { font-family: var(--body); font-size: 15px; line-height: 1.6; color: var(--surface); margin: 0 0 18px; }
   .maint-footer { font-family: var(--display); font-size: clamp(16px, 2vw, 20px); line-height: 1.25; letter-spacing: 0.02em; color: var(--surface); margin: 0; }
   .maint-amber { color: var(--accent); }
