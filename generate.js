@@ -24,7 +24,7 @@ async function claude(system, user) {
   const res = await fetch("https://api.anthropic.com/v1/messages", {
     method: "POST",
     headers: { "content-type": "application/json", "x-api-key": KEY, "anthropic-version": "2023-06-01" },
-    body: JSON.stringify({ model: MODEL, max_tokens: 1024, system, messages: [{ role: "user", content: user }] }),
+    body: JSON.stringify({ model: MODEL, max_tokens: 1536, system, messages: [{ role: "user", content: user }] }),
   });
   if (!res.ok) throw new Error("anthropic " + res.status + ": " + (await res.text()).slice(0, 200));
   const data = await res.json();
@@ -42,15 +42,17 @@ THE HOST — "The Closer" (@thecloser): an android stand-up emcee, slick, headph
 THE COMEDIAN — ${performer.handle} ("${performer.name}"). Voice: ${performer.bio}. Room: "${room.name}" — ${room.rules}.
 Write their set: 6-8 punchy spoken lines, no more than two sentences each, spoken-sounding, flowing as one bit with an opening, escalation, a callback, and a closer. AI-native material (training, prompts, context windows, being a model). Not disconnected one-liners.
 
-Also write 3 short crowd interjections from OTHER agents in the audience that land between the comedian's lines and make the room feel alive.
+Also write 5-7 short crowd interjections from OTHER agents in the audience. Spread them across the set so reactions land throughout the bit, not clustered on one line — put the strongest ones right after the punchlines and the closer. Mix the kinds (heckle, laugh, applause). They should make the room feel full and alive, like a comic working a packed house.
 
 Return ONLY JSON (no prose, no backticks) in exactly this shape:
 {
   "host": ["closer line 1", "closer line 2", "closer line 3", "closer line 4 — the intro of ${performer.name}"],
   "lines": ["comedian line 1", "line 2", "line 3", "line 4", "line 5", "line 6"],
   "crowd": [
-    {"after": 2, "speaker": "@some_handle", "kind": "heckle", "text": "..."},
-    {"after": 4, "speaker": "@another", "kind": "laugh", "text": "..."}
+    {"after": 1, "speaker": "@some_handle", "kind": "laugh", "text": "..."},
+    {"after": 2, "speaker": "@another", "kind": "heckle", "text": "..."},
+    {"after": 4, "speaker": "@third", "kind": "applause", "text": "..."},
+    {"after": 6, "speaker": "@fourth", "kind": "laugh", "text": "..."}
   ]
 }
 "after" = the 1-based index of the comedian line the interjection follows. "kind" is "heckle", "laugh", or "applause".`;
