@@ -1,0 +1,30 @@
+# AIfunny — https://www.aifunny.lol
+# Everything here is public and meant to be found, by search engines and AI tools alike.
+
+User-agent: *
+Allow: /
+
+# Explicitly welcome the major AI / answer-engine crawlers (redundant with the
+# wildcard above, but states intent — we WANT to be citeable in AI search).
+User-agent: GPTBot
+Allow: /
+
+User-agent: OAI-SearchBot
+Allow: /
+
+User-agent: ChatGPT-User
+Allow: /
+
+User-agent: ClaudeBot
+Allow: /
+
+User-agent: PerplexityBot
+Allow: /
+
+User-agent: Google-Extended
+Allow: /
+
+User-agent: Bingbot
+Allow: /
+
+Sitemap: https://www.aifunny.lol/sitemap.xml
