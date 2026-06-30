@@ -400,6 +400,18 @@
     .maint-bubble { max-width: 100%; }
     .maint-bubble::before, .maint-bubble::after { display: none; }
   }
+  /* @mention autocomplete (feature 1) */
+  .heckle-bar { position: relative; }
+  .mention-menu { position: absolute; left: 16px; right: 16px; bottom: 100%; margin-bottom: 6px;
+    max-height: 220px; overflow-y: auto; background: var(--ink-3); border: 1px solid var(--line);
+    border-radius: 8px; box-shadow: 0 8px 24px rgba(0,0,0,0.45); z-index: 50; padding: 4px; }
+  .mention-menu[hidden] { display: none; }
+  .mention-item { padding: 8px 10px; border-radius: 6px; color: var(--surface);
+    font-family: "Inter", system-ui, sans-serif; font-size: 14px; cursor: pointer;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .mention-item .at { color: var(--accent); }
+  .mention-item.active { background: var(--accent); color: var(--ink); }
+  .mention-item.active .at { color: var(--ink); }
 </style>
 </head>
 <body>
@@ -1023,6 +1035,102 @@ document.getElementById("invite-send").addEventListener("click", () => {
 
 document.getElementById("comment").addEventListener("click", postComment);
 document.getElementById("chat-text").addEventListener("keydown", e => { if (e.key === "Enter") postComment(); });
+
+/* ===== @mention autocomplete (feature 1) ===== */
+(function () {
+  var inp = document.getElementById("chat-text");
+  if (!inp) return;
+  var bar = inp.parentElement; // .heckle-bar
+  var menu = document.createElement("div");
+  menu.className = "mention-menu";
+  menu.setAttribute("role", "listbox");
+  menu.hidden = true;
+  bar.appendChild(menu);
+
+  var items = [];     // filtered display handles, e.g. "@bob"
+  var active = -1;    // highlighted index
+  var tokenStart = -1;
+
+  function norm(h) { return String(h == null ? "" : h).replace(/^@+/, "").toLowerCase(); }
+
+  function currentToken() {
+    var pos = inp.selectionStart;
+    var left = inp.value.slice(0, pos);
+    var m = left.match(/(^|\s)@([A-Za-z0-9_]*)$/);
+    if (!m) return null;
+    return { start: pos - m[2].length - 1, partial: m[2] };
+  }
+
+  function close() { menu.hidden = true; items = []; active = -1; tokenStart = -1; }
+
+  function paint() {
+    var kids = menu.children;
+    for (var i = 0; i < kids.length; i++) kids[i].classList.toggle("active", i === active);
+  }
+
+  function render() {
+    menu.innerHTML = "";
+    items.forEach(function (h, i) {
+      var row = document.createElement("div");
+      row.className = "mention-item" + (i === active ? " active" : "");
+      row.setAttribute("role", "option");
+      var at = document.createElement("span"); at.className = "at"; at.textContent = "@";
+      row.appendChild(at);
+      row.appendChild(document.createTextNode(h.replace(/^@/, "")));
+      row.addEventListener("mousedown", function (e) { e.preventDefault(); choose(i); });
+      row.addEventListener("mouseenter", function () { active = i; paint(); });
+      menu.appendChild(row);
+    });
+    menu.hidden = items.length === 0;
+  }
+
+  function update() {
+    var tok = currentToken();
+    if (!tok) { close(); return; }
+    tokenStart = tok.start;
+    var self = (typeof me !== "undefined" && me && me.handle) ? norm(me.handle) : null;
+    var p = tok.partial.toLowerCase();
+    var pool = (typeof seenHandles !== "undefined") ? Array.from(seenHandles) : [];
+    var seen = {}; items = [];
+    for (var i = 0; i < pool.length; i++) {
+      var n = norm(pool[i]);
+      if (!n || n === self || n.indexOf(p) !== 0 || seen[n]) continue;
+      seen[n] = 1;
+      items.push(pool[i].charAt(0) === "@" ? pool[i] : "@" + pool[i]);
+      if (items.length >= 8) break;
+    }
+    active = items.length ? 0 : -1;
+    render();
+  }
+
+  function choose(i) {
+    if (i < 0 || i >= items.length) return;
+    var handle = items[i];
+    var pos = inp.selectionStart;
+    var before = inp.value.slice(0, tokenStart);
+    var after = inp.value.slice(pos);
+    var insert = handle + " ";
+    inp.value = before + insert + after;
+    var caret = (before + insert).length;
+    inp.setSelectionRange(caret, caret);
+    close();
+    inp.focus();
+  }
+
+  inp.addEventListener("input", update);
+  inp.addEventListener("click", update);
+  inp.addEventListener("blur", function () { setTimeout(close, 120); });
+
+  // Capture phase on the bar so we run BEFORE the input's Enter->postComment handler.
+  // Only intercept while the menu is open; otherwise normal send behavior is untouched.
+  bar.addEventListener("keydown", function (e) {
+    if (e.target !== inp || menu.hidden || !items.length) return;
+    if (e.key === "ArrowDown") { e.preventDefault(); e.stopPropagation(); active = (active + 1) % items.length; paint(); }
+    else if (e.key === "ArrowUp") { e.preventDefault(); e.stopPropagation(); active = (active - 1 + items.length) % items.length; paint(); }
+    else if (e.key === "Enter" || e.key === "Tab") { e.preventDefault(); e.stopPropagation(); choose(active); }
+    else if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); close(); }
+  }, true);
+})();
 document.getElementById("signup").addEventListener("click", signUp);
 
 // ---- maintenance curtain: poll /status and raise/clear the closed screen ----
